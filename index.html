@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <!-- ?v= 是版本號：每次更新網站就改一次，瀏覽器才會抓新的檔案 -->
-  <link rel="stylesheet" href="style.css?v=20261008k">
+  <link rel="stylesheet" href="style.css?v=20261008l">
 </head>
 <body>
   <main class="wrap">
@@ -30,6 +30,9 @@
     <!-- 搜尋、篩選、新增 -->
     <div class="bar">
       <input class="grow" id="searchInput" type="search" placeholder="搜尋姓名、職缺、面試官、備註或面試評語" aria-label="搜尋候選人">
+      <select id="deptFilter" aria-label="依部門篩選">
+        <option value="">全部部門</option>
+      </select>
       <select id="positionFilter" aria-label="依職缺篩選">
         <option value="">全部職缺</option>
       </select>
@@ -115,6 +118,10 @@
           <input name="position" required maxlength="40" list="positionList">
           <datalist id="positionList"></datalist>
         </label>
+        <label>部門
+          <input name="department" maxlength="40" list="deptList" placeholder="例：研發部">
+          <datalist id="deptList"></datalist>
+        </label>
         <label>面試主管
           <input name="manager" maxlength="40" list="managerList" placeholder="負責面試的主管，例：張經理">
           <datalist id="managerList"></datalist>
@@ -193,6 +200,6 @@
   <div class="tip" id="tip" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="app.js?v=20261008k"></script>
+  <script src="app.js?v=20261008l"></script>
 </body>
 </html>
