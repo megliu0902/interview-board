@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <!-- ?v= 是版本號：每次更新網站就改一次，瀏覽器才會抓新的檔案 -->
-  <link rel="stylesheet" href="style.css?v=20261008l">
+  <link rel="stylesheet" href="style.css?v=20261008m">
 </head>
 <body>
   <main class="wrap">
@@ -45,12 +45,7 @@
     <!-- 隱私與資料管理 -->
     <div class="bar">
       <button class="btn ghost" id="maskBtn" type="button" aria-pressed="false" title="投影或分享螢幕時，隱藏姓名與聯絡資料">遮蔽模式</button>
-      <span class="bar-sep" aria-hidden="true"></span>
-      <button class="btn ghost" id="exportBtn" type="button" title="下載 JSON 備份檔">匯出 JSON</button>
-      <label class="btn ghost" title="從 JSON 備份檔還原">
-        匯入 JSON
-        <input type="file" id="importInput" accept=".json,application/json" hidden>
-      </label>
+      <button class="btn ghost" id="roomMgrBtn" type="button" title="新增、修改或刪除會議室">會議室管理</button>
       <button class="btn ghost" id="resetBtn" type="button">還原示範資料</button>
     </div>
 
@@ -72,6 +67,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="board" role="tab">看板</button>
       <button class="tab" data-view="calendar" role="tab">月曆</button>
+      <button class="tab" data-view="rooms" role="tab">會議室</button>
       <button class="tab" data-view="analysis" role="tab">分析</button>
     </nav>
 
@@ -92,11 +88,26 @@
       <p class="hint">點日期可直接新增當天的面試，點面試可編輯。</p>
     </section>
 
+    <!-- 會議室檢視：每間會議室一天的時間軸 -->
+    <section id="roomsView" class="rooms" hidden>
+      <div class="cal-head rooms-head">
+        <button class="btn ghost" id="prevDay">‹ 前一天</button>
+        <div class="rooms-date">
+          <h2 id="roomsTitle"></h2>
+          <input type="date" id="roomsDate" aria-label="選擇日期">
+          <button class="link-btn" id="roomsToday" type="button">回到今天</button>
+        </div>
+        <button class="btn ghost" id="nextDay">後一天 ›</button>
+      </div>
+      <div class="rooms-scroll"><div id="roomsGrid"></div></div>
+      <p class="hint">點空白時段可以直接在那間會議室排面試；點面試可編輯。紅框代表同一時間同一間會議室被重複預約。</p>
+    </section>
+
     <!-- 分析檢視 -->
     <section id="analysisView" class="analysis" hidden></section>
 
     <footer class="footer">
-      <p>資料只存在這台裝置的瀏覽器中，不會上傳到任何伺服器。要備份或換電腦，請先「匯出 JSON」，再在另一邊「匯入 JSON」。</p>
+      <p>資料只存在這台裝置的瀏覽器中，不會上傳到任何伺服器。要備份或換電腦，請先「匯出 Excel」，再在另一邊「匯入 Excel」。</p>
       <p>備份檔內含候選人個資，請存放在安全的地方，不要上傳到 GitHub 或其他公開網站。</p>
       <button class="link-btn danger-link" id="clearAllBtn" type="button">清除所有資料</button>
       <p class="org-footer">© Dawning Technology Inc. / HR Operations Dept.</p>
@@ -155,6 +166,7 @@
 
       <h3 class="form-section">面試紀錄</h3>
       <div id="roundsList"></div>
+      <datalist id="roomOptions"></datalist>
       <button type="button" class="btn ghost small add-round" id="addRound">＋ 新增一輪面試</button>
 
       <h3 class="form-section">綜合評估</h3>
@@ -171,6 +183,25 @@
         <button type="button" class="btn danger" id="deleteBtn">刪除</button>
         <span class="spacer"></span>
         <button type="button" class="btn ghost" id="cancelBtn">取消</button>
+        <button type="submit" class="btn">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 會議室管理 -->
+  <dialog id="roomDialog">
+    <form id="roomForm" method="dialog">
+      <p class="eyebrow">MEETING ROOMS</p>
+      <h2>會議室管理</h2>
+      <p class="hint">這裡的會議室會出現在面試「地點」的選單，以及「會議室」分頁的時間軸。名稱含「視訊、電話、Meet、Teams」的會視為線上，不會檢查場地衝突。</p>
+      <ul id="roomList" class="room-list"></ul>
+      <div class="room-add">
+        <input id="roomNew" maxlength="30" placeholder="新會議室名稱，例：會議室 D">
+        <button type="button" class="btn ghost small" id="roomAddBtn">＋ 新增</button>
+      </div>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="roomCancel">取消</button>
         <button type="submit" class="btn">儲存</button>
       </div>
     </form>
@@ -200,6 +231,6 @@
   <div class="tip" id="tip" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="app.js?v=20261008l"></script>
+  <script src="app.js?v=20261008m"></script>
 </body>
 </html>
