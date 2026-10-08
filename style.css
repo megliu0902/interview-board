@@ -553,3 +553,43 @@ body {
 .card .mgr { color: var(--fg); }
 .card .mgr b { color: var(--primary); }
 #managerFilter { max-width: 220px; }
+
+/* Excel 匯入／匯出 */
+.excel-bar .bar-label {
+  font-size: 12px; font-weight: 700; letter-spacing: .14em; color: #1d6f42;
+  background: #e3f3e9; border-radius: 999px; padding: 4px 12px;
+}
+.btn.excel { background: #1d6f42; border-color: #1d6f42; color: #fff; }
+.btn.excel:hover { background: #24864f; border-color: #24864f; }
+#importDialog { width: min(760px, calc(100% - 32px)); }
+#importForm { padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+#importForm h2 { margin: 0; color: var(--primary); font-size: 28px; }
+.import-big { margin: 0; font-size: 16px; }
+.import-big b { color: var(--primary); font-size: 20px; }
+.import-notes { font-size: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; margin-top: 8px; }
+.import-notes.bad summary { color: var(--danger); font-weight: 700; cursor: pointer; }
+.import-notes.fix summary { color: var(--warn); font-weight: 700; cursor: pointer; }
+.import-notes ul { margin: 6px 0; padding-left: 20px; color: var(--muted); }
+.import-table { max-width: none; }
+#importTable { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.import-table th { position: sticky; top: 0; background: var(--surface); }
+.import-mode { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.import-mode legend { color: var(--primary); font-weight: 700; padding: 0 6px; }
+.import-mode label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+#importConfirm:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 分析：更多指標 */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 28px; }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .vseg { display: inline-block; width: 12px; height: 12px; }
+.vbars { display: flex; align-items: flex-end; gap: 8px; max-width: 760px; border-bottom: 1px solid var(--line); padding-top: 8px; }
+.vcol { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 190px; cursor: default; border-radius: 8px; }
+.vcol:hover, .vcol:focus { background: var(--brand-soft); outline: none; }
+.vnum { font-size: 13px; font-weight: 700; color: var(--fg); margin-bottom: 4px; min-height: 1.2em; }
+.vstack { width: 70%; max-width: 40px; display: flex; flex-direction: column-reverse; gap: 2px; }
+.vseg { display: block; background: var(--primary); border-radius: 4px; }
+.vseg.sched { background: var(--accent-bright); }
+.vlabel { font-size: 12px; color: var(--muted); margin-top: 6px; white-space: nowrap; }
+.vcol.now .vlabel { color: var(--primary); font-weight: 700; }
+.analysis .data-table { max-width: none; }
