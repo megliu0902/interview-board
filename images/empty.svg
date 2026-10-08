@@ -1,4 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect x="5" y="6" width="22" height="20" rx="4" fill="none" stroke="#5aa0f0" stroke-width="1.5" stroke-dasharray="3 2"/>
-  <line x1="10" y1="16" x2="22" y2="16" stroke="#f8981d" stroke-width="1.5" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48">
+  <!-- 空欄位：笑臉資料夾 -->
+  <ellipse cx="32" cy="44" rx="20" ry="3" fill="#d6e3f3"/>
+  <path d="M10 12 Q10 8 14 8 H24 L28 12 H50 Q54 12 54 16 V36 Q54 40 50 40 H14 Q10 40 10 36 Z" fill="#e6f0fd" stroke="#5aa0f0" stroke-width="2"/>
+  <circle cx="26" cy="25" r="2" fill="#006ae0"/>
+  <circle cx="38" cy="25" r="2" fill="#006ae0"/>
+  <path d="M27 31 Q32 35 37 31" fill="none" stroke="#f8981d" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M56 6 L57.5 9.5 L61 11 L57.5 12.5 L56 16 L54.5 12.5 L51 11 L54.5 9.5 Z" fill="#f8981d"/>
 </svg>
