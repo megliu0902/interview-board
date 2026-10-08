@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>面試排程與進度看板</title>
+  <link rel="icon" href="images/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@500;600&family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <!-- 標題 -->
+    <header class="top">
+      <img src="images/logo.svg" alt="" width="44" height="44">
+      <div>
+        <p class="eyebrow">INTERVIEW PIPELINE</p>
+        <h1>面試排程與進度看板</h1>
+        <p class="sub">拖曳卡片或用卡片上的下拉選單更換階段，點姓名可編輯。</p>
+      </div>
+    </header>
+
+    <!-- 提醒橫幅（備份提醒、個資保存期限提醒） -->
+    <section id="banners"></section>
+
+    <!-- 搜尋、篩選、新增 -->
+    <div class="bar">
+      <input class="grow" id="searchInput" type="search" placeholder="搜尋姓名、職缺、面試官、備註或面試評語" aria-label="搜尋候選人">
+      <select id="positionFilter" aria-label="依職缺篩選">
+        <option value="">全部職缺</option>
+      </select>
+      <button class="btn" id="addBtn" type="button">新增候選人</button>
+    </div>
+
+    <!-- 隱私與資料管理 -->
+    <div class="bar">
+      <button class="btn ghost" id="maskBtn" type="button" aria-pressed="false" title="投影或分享螢幕時，隱藏姓名與聯絡資料">遮蔽模式</button>
+      <span class="bar-sep" aria-hidden="true"></span>
+      <button class="btn ghost" id="exportBtn" type="button" title="下載 JSON 備份檔">匯出 JSON</button>
+      <label class="btn ghost" title="從 JSON 備份檔還原">
+        匯入 JSON
+        <input type="file" id="importInput" accept=".json,application/json" hidden>
+      </label>
+      <button class="btn ghost" id="resetBtn" type="button">還原示範資料</button>
+    </div>
+
+    <!-- 統計 -->
+    <div class="stats" id="stats" role="status"></div>
+
+    <!-- 切換檢視 -->
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="board" role="tab">看板</button>
+      <button class="tab" data-view="calendar" role="tab">月曆</button>
+      <button class="tab" data-view="analysis" role="tab">分析</button>
+    </nav>
+
+    <!-- 看板檢視 -->
+    <section id="boardView" class="board"></section>
+
+    <!-- 月曆檢視 -->
+    <section id="calendarView" class="calendar" hidden>
+      <div class="cal-head">
+        <button class="btn ghost" id="prevMonth">‹ 上個月</button>
+        <h2 id="calTitle"></h2>
+        <button class="btn ghost" id="nextMonth">下個月 ›</button>
+      </div>
+      <div class="cal-grid cal-weekdays">
+        <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+      <p class="hint">點日期可直接新增當天的面試，點面試可編輯。</p>
+    </section>
+
+    <!-- 分析檢視 -->
+    <section id="analysisView" class="analysis" hidden></section>
+
+    <footer class="footer">
+      <p>資料只存在這台裝置的瀏覽器中，不會上傳到任何伺服器。要備份或換電腦，請先「匯出 JSON」，再在另一邊「匯入 JSON」。</p>
+      <p>備份檔內含候選人個資，請存放在安全的地方，不要上傳到 GitHub 或其他公開網站。</p>
+      <button class="link-btn danger-link" id="clearAllBtn" type="button">清除所有資料</button>
+    </footer>
+  </main>
+
+  <!-- 新增／編輯候選人的彈出視窗 -->
+  <dialog id="modal">
+    <form id="form" method="dialog">
+      <p class="eyebrow" id="modalEyebrow">NEW CANDIDATE</p>
+      <h2 id="modalTitle">新增候選人</h2>
+
+      <h3 class="form-section">基本資料</h3>
+      <div class="form-grid">
+        <label>姓名 *
+          <input name="name" class="pii" required maxlength="40">
+        </label>
+        <label>應徵職缺 *
+          <input name="position" required maxlength="40" list="positionList">
+          <datalist id="positionList"></datalist>
+        </label>
+        <label>Email
+          <input name="email" class="pii" type="email">
+        </label>
+        <label>電話
+          <input name="phone" class="pii" type="tel">
+        </label>
+      </div>
+      <p class="warn dup" id="dupWarn" hidden></p>
+
+      <h3 class="form-section">進度</h3>
+      <div class="form-grid">
+        <label>目前階段
+          <select name="stage" id="stageSelect"></select>
+        </label>
+        <label>結案結果
+          <select name="result">
+            <option value="">（未結案）</option>
+            <option value="錄取">錄取</option>
+            <option value="未錄取">未錄取</option>
+            <option value="候選人婉拒">候選人婉拒</option>
+          </select>
+        </label>
+      </div>
+      <label class="full">下一步
+        <input name="next" maxlength="60" placeholder="例：寄出 Offer 信、三天後追蹤">
+      </label>
+
+      <h3 class="form-section">面試紀錄</h3>
+      <div id="roundsList"></div>
+      <button type="button" class="btn ghost small add-round" id="addRound">＋ 新增一輪面試</button>
+
+      <h3 class="form-section">綜合評估</h3>
+      <div class="rating-row">
+        <span>綜合評分</span>
+        <div class="stars" id="starInput"></div>
+        <button type="button" class="link-btn" id="clearRating">清除</button>
+      </div>
+      <label class="full">備註
+        <textarea name="notes" class="pii" rows="3" placeholder="優點、待確認事項、薪資期望…"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="btn danger" id="deleteBtn">刪除</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="cancelBtn">取消</button>
+        <button type="submit" class="btn">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="tip" id="tip" role="tooltip" hidden></div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
