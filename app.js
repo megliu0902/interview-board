@@ -2303,11 +2303,11 @@ function weekRange(offset) {
 }
 const fmtDay = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}（${'日一二三四五六'[d.getDay()]}）`; };
 
-function buildReport() {
-  // 範圍：上方的部門／職缺／面試主管篩選（不含搜尋文字）
-  const dept = $('#deptFilter').value, pos = $('#positionFilter').value, mgr = $('#managerFilter').value;
-  const list = candidates.filter((c) => (!dept || (c.department || '未分類') === dept) && (!pos || c.position === pos) && (!mgr || c.manager === mgr));
-  const scope = [dept || '全部部門', pos || '全部職缺', mgr ? `面試主管 ${mgr}` : ''].filter(Boolean).join('・');
+// 計算某一群候選人的週報內容（週報視窗、依部門匯出共用）
+// nameOf：姓名要怎麼顯示（畫面上跟著遮蔽模式；匯出給主管的檔案用完整姓名）
+function computeReport(list, weekOffset, nameOf = dn) {
+  const dn = nameOf;
+  const reportWeek = weekOffset;
   const { start, end } = weekRange(reportWeek);
   const next = weekRange(reportWeek + 1);
   const inWeek = (t, r = { start, end }) => { const x = new Date(t).getTime(); return x >= r.start && x < r.end; };
@@ -2337,8 +2337,9 @@ function buildReport() {
 
   const W = reportWeek === 0 ? '本週' : '上週';     // 報告的那一週
   const NW = reportWeek === 0 ? '下週' : '本週';    // 報告的下一週
-  reportData = {
-    W, NW,
+  return {
+    W, NW, start, end,
+    counts: { active: active.length, stuck: stuck.length, offers: offers.length, doneIv: doneIv.length, nextIv: nextIv.length, newApps: newApps.length, hired: hired.length },
     file: `招募週報_${dateKey(new Date(start))}_${dateKey(new Date(end - DAY))}.xlsx`,
     title: `招募週報 ${fmtDay(start)}～${fmtDay(end - DAY)}`,
     summary: [
@@ -2356,6 +2357,14 @@ function buildReport() {
     ],
     depts
   };
+}
+
+function buildReport() {
+  // 範圍：上方的部門／職缺／面試主管篩選（不含搜尋文字）
+  const dept = $('#deptFilter').value, pos = $('#positionFilter').value, mgr = $('#managerFilter').value;
+  const list = candidates.filter((c) => (!dept || (c.department || '未分類') === dept) && (!pos || c.position === pos) && (!mgr || c.manager === mgr));
+  const scope = [dept || '全部部門', pos || '全部職缺', mgr ? `面試主管 ${mgr}` : ''].filter(Boolean).join('・');
+  reportData = computeReport(list, reportWeek);
 
   const table = (head, rows, empty) => rows.length
     ? `<table class="data-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
@@ -2414,6 +2423,129 @@ $('#reportExcel').addEventListener('click', () => withXlsx((X) => {
   add('部門摘要', ['部門', '進行中', `${R.W}新增投遞`, `${R.W}完成面試`, `${R.W}錄取`], R.depts, [12, 8, 12, 12, 10]);
   X.writeFile(wb, R.file);
   toast('已匯出週報 Excel');
+}));
+
+// ---------- 依部門匯出（分別寄給各部門主管）----------
+const deptDialog = $('#deptDialog');
+const deptOf = (c) => c.department || '未分類';
+const deptNames = () => [...new Set(candidates.map(deptOf))].sort((a, b) => (a === '未分類') - (b === '未分類') || a.localeCompare(b, 'zh-Hant'));
+
+function deptWorkbook(X, dept) {
+  const list = candidates.filter((c) => deptOf(c) === dept);
+  const R = computeReport(list, 0, (c) => c.name);   // 給主管的檔案用完整姓名
+  const wb = buildWorkbook(X, candidatesToRows(list));
+  // 把「候選人」「填寫說明」之外，再加上摘要與本週資訊；摘要放第一張
+  const sheet = (rows, widths) => { const ws = X.utils.aoa_to_sheet(rows); ws['!cols'] = widths.map((w) => ({ wch: w })); return ws; };
+  const summary = sheet([
+    ['敦新科技 Dawning Technology Inc.　面試進度報告'],
+    ['部門', dept],
+    ['資料日期', formatDate(nowIso())],
+    ['面試主管', [...new Set(list.map((c) => c.manager).filter(Boolean))].join('、') || '—'],
+    [],
+    ['項目', '數量'],
+    ...R.summary,
+    [],
+    ['目前各階段人數', ''],
+    ...STAGES.map((s) => [s, list.filter((c) => c.stage === s).length]),
+    [],
+    ['本檔案含候選人個資，僅供部門內部使用，請勿轉寄或上傳到公開網站。']
+  ], [26, 30]);
+  X.utils.book_append_sheet(wb, summary, '摘要');
+  X.utils.book_append_sheet(wb, sheet([['時間', '候選人', '職缺', '輪次', '面試官', '評分', '評語'], ...R.done], [16, 10, 12, 8, 10, 8, 30]), '本週面試');
+  X.utils.book_append_sheet(wb, sheet([['時間', '候選人', '職缺', '輪次', '面試官', '地點'], ...R.pending, ...R.next], [16, 10, 12, 8, 10, 18]), '待進行與下週排程');
+  X.utils.book_append_sheet(wb, sheet([['類型', '候選人', '職缺', '狀況', '下一步'], ...R.attention], [12, 10, 12, 16, 24]), '需要關注');
+  // 工作表順序：摘要 → 候選人 → 本週 → 排程 → 關注 → 填寫說明
+  wb.SheetNames = ['摘要', '候選人', '本週面試', '待進行與下週排程', '需要關注', '填寫說明'];
+  return { wb, R, list };
+}
+const deptFile = (dept) => `面試進度_${dept}_${dateKey(new Date())}.xlsx`;
+
+function renderDeptExport() {
+  const rows = deptNames().map((d) => {
+    const list = candidates.filter((c) => deptOf(c) === d);
+    const R = computeReport(list, 0);
+    return `<tr>
+      <td><b>${esc(d)}</b></td>
+      <td class="num">${list.length}</td>
+      <td class="num">${R.counts.active}</td>
+      <td class="num">${R.counts.nextIv}</td>
+      <td>${esc([...new Set(list.map((c) => c.manager).filter(Boolean))].join('、') || '—')}</td>
+      <td class="dept-btns">
+        <button type="button" class="btn excel small" data-dl="${esc(d)}">下載 Excel</button>
+        <button type="button" class="btn ghost small" data-mail="${esc(d)}">✉ 寄給主管</button>
+      </td>
+    </tr>`;
+  }).join('');
+  $('#deptExportTable').innerHTML = `<thead><tr><th>部門</th><th class="num">候選人</th><th class="num">進行中</th><th class="num">下週面試</th><th>面試主管</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+$('#deptExportBtn').addEventListener('click', () => {
+  if (!candidates.length) return toast('目前沒有資料可以匯出');
+  renderDeptExport();
+  deptDialog.showModal();
+});
+$('#deptClose').addEventListener('click', () => deptDialog.close());
+
+$('#deptExportTable').addEventListener('click', (e) => {
+  const dl = e.target.closest('[data-dl]')?.dataset.dl;
+  const mail = e.target.closest('[data-mail]')?.dataset.mail;
+  if (dl) {
+    withXlsx((X) => {
+      X.writeFile(deptWorkbook(X, dl).wb, deptFile(dl));
+      toast(`已下載「${dl}」的 Excel`);
+    });
+  }
+  if (mail) {
+    const list = candidates.filter((c) => deptOf(c) === mail);
+    const R = computeReport(list, 0, (c) => c.name);
+    const subject = `【面試進度】${mail}｜${formatDate(nowIso())}`;
+    const body = [
+      `${mail} 主管您好：`,
+      '',
+      `附件是${mail}目前的面試進度（資料日期 ${formatDate(nowIso())}），重點如下：`,
+      '',
+      `・進行中的候選人：${R.counts.active} 位`,
+      `・本週已完成面試：${R.counts.doneIv} 場`,
+      `・下週已排定面試：${R.counts.nextIv} 場`,
+      `・卡關 ${STUCK_DAYS} 天以上：${R.counts.stuck} 位`,
+      `・Offer 待回覆：${R.counts.offers} 位`,
+      '',
+      '面試評分與評語可以直接填在附件「候選人」工作表，回傳給我即可。',
+      '附件含候選人個資，請勿轉寄或上傳到公開網站，謝謝。',
+      '',
+      'HR Operations Dept.',
+      'Dawning Technology Inc.'
+    ].join('\n');
+    location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    toast(`已開啟郵件，請填入主管 Email，並附加「${deptFile(mail)}」`);
+  }
+});
+
+// 全部打包成 ZIP（JSZip 一樣是需要時才載入）
+const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+function loadJsZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = JSZIP_URL;
+    s.onload = () => resolve(window.JSZip);
+    s.onerror = () => reject(new Error('load failed'));
+    document.head.appendChild(s);
+  });
+}
+$('#deptZipBtn').addEventListener('click', () => withXlsx(async (X) => {
+  let JSZip;
+  try { JSZip = await loadJsZip(); } catch (e) { return alert('無法載入壓縮工具，請確認網路連線後再試一次。'); }
+  const zip = new JSZip();
+  const names = deptNames();
+  names.forEach((d) => zip.file(deptFile(d), X.write(deptWorkbook(X, d).wb, { type: 'array', bookType: 'xlsx' })));
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `各部門面試進度_${dateKey(new Date())}.zip`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`已打包 ${names.length} 個部門的 Excel`);
 }));
 
 // ---------- 啟動 ----------
