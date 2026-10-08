@@ -55,7 +55,7 @@ function toast(msg) {
   toast.timer = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
-// 下載檔案（備份 JSON、行事曆 .ics 共用）
+// 下載檔案（行事曆 .ics 用）
 function downloadFile(content, filename, type) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([content], { type }));
@@ -71,7 +71,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 5;
+const DEMO_VERSION = 6;
 upgradeDemo();
 
 function upgradeDemo() {
@@ -217,7 +217,7 @@ function sampleData() {
     '邱冠宇', '廖心怡', '賴俊宏', '徐子晴', '葉家銘', '高郁婷', '簡志偉', '游舒涵', '詹凱文', '施宛儒',
     '方振宇', '潘怡萱', '杜承翰', '羅佳穎', '戴宇軒', '范靜宜', '傅彥廷', '侯欣妤', '魏冠霖', '鍾雅琪'
   ];
-  const LOCATIONS = ['會議室 A', '會議室 B', '總部 5F 會議室', 'Google Meet', 'Teams 視訊'];
+  const LOCATIONS = ['會議室 A', '會議室 A', '會議室 B', '會議室 B', '會議室 C', '5F 大會議室', '視訊（Google Meet）', '視訊（Teams）'];
   const GOOD = ['邏輯清楚，回答有條理', '實作經驗豐富，作品完整', '溝通順暢，主動提問', '學習動機強，態度積極',
     '對產業有自己的見解', '團隊合作經驗豐富', '技術題全部答對', '價值觀契合，推薦進下一關'];
   const SO_SO = ['經驗略少，但潛力不錯', '表達稍緊張，內容尚可', '專業不錯，薪資期望偏高', '需要再確認穩定度'];
@@ -298,6 +298,19 @@ function sampleData() {
     };
   });
 
+  // 會議室重複預約的例子：兩場未來的面試排在同一時間、同一間會議室
+  const nowStr = toLocalInput(new Date());
+  const upcoming = list.filter((c) => c.stage !== '結案')
+    .map((c) => ({ c, iv: c.interviews.find((iv) => iv.at > nowStr && iv.round !== '電話篩選') }))
+    .filter((x) => x.iv);
+  if (upcoming.length >= 2) {
+    const [a, b] = upcoming.slice(-2);
+    a.iv.location = '會議室 B';
+    b.iv.location = '會議室 B';
+    b.iv.at = a.iv.at;
+    b.c.next = '會議室撞期，需改時間';
+  }
+
   // 重複投遞的例子：之前未錄取的人，這次改投別的職缺
   const before = list.find((c) => c.result === '未錄取');
   list.push({
@@ -320,21 +333,34 @@ function cardInterview(c) {
   return list.find((iv) => ivEnd(iv) > Date.now()) || list[list.length - 1] || null;
 }
 
-// 找出和某一場面試時間重疊的其他面試（不含已結案的候選人）
+// ---------- 會議室 ----------
+const DEFAULT_ROOMS = ['會議室 A', '會議室 B', '會議室 C', '5F 大會議室', '視訊（Google Meet）', '視訊（Teams）', '電話'];
+const getRooms = () => (Array.isArray(meta.rooms) && meta.rooms.length ? meta.rooms : DEFAULT_ROOMS);
+// 線上或電話面試不佔實體空間，不檢查場地衝突
+const isOnline = (loc) => /視訊|電話|線上|meet|teams|zoom|skype/i.test(loc || '');
+const isPhysicalRoom = (loc) => !!loc && !isOnline(loc);
+
+// 找出和某一場面試「撞期」的其他面試（不含已結案的候選人）
+// 撞期＝時間重疊，而且是同一位面試官、同一間實體會議室，或同一位候選人
 // ownerRounds：這位候選人自己的其他輪面試（編輯中時用表單上的內容）
 function findConflicts(iv, ownerId, ownerRounds) {
   if (!iv.at) return [];
   const s = ivStart(iv), e = ivEnd(iv);
   const hits = [];
-  const check = (name, o) => {
-    if (o.id !== iv.id && o.at && s < ivEnd(o) && ivStart(o) < e) hits.push({ name, iv: o });
+  const check = (name, o, sameCandidate) => {
+    if (o.id === iv.id || !o.at || !(s < ivEnd(o) && ivStart(o) < e)) return;
+    const why = [];
+    if (sameCandidate) why.push('同一位候選人');
+    if (iv.interviewer && o.interviewer === iv.interviewer) why.push(`面試官 ${iv.interviewer} 重複`);
+    if (isPhysicalRoom(iv.location) && o.location === iv.location) why.push(`${iv.location} 已被預約`);
+    if (why.length) hits.push({ name, iv: o, why });
   };
   for (const c of candidates) {
     if (c.id === ownerId || c.stage === '結案') continue;
-    c.interviews.forEach((o) => check(c.name, o));
+    c.interviews.forEach((o) => check(c.name, o, false));
   }
   const self = candidates.find((c) => c.id === ownerId);
-  (ownerRounds || self?.interviews || []).forEach((o) => check(self?.name || '同一人', o));
+  (ownerRounds || self?.interviews || []).forEach((o) => check(self?.name || '同一人', o, true));
   return hits;
 }
 
@@ -406,8 +432,127 @@ function render() {
   renderStats();
   if (view === 'board') renderBoard();
   else if (view === 'calendar') renderCalendar();
+  else if (view === 'rooms') renderRooms();
   else renderAnalysis();
 }
+
+// ---------- 會議室時間軸 ----------
+const DAY_START = 8, DAY_END = 19;   // 時間軸顯示 08:00～19:00
+let roomsDay = dateKey(new Date());
+
+function renderRooms() {
+  const d = new Date(`${roomsDay}T00:00`);
+  const week = '日一二三四五六'[d.getDay()];
+  $('#roomsTitle').textContent = `${d.getMonth() + 1} 月 ${d.getDate()} 日（週${week}）${roomsDay === dateKey(new Date()) ? '・今天' : ''}`;
+  $('#roomsDate').value = roomsDay;
+
+  const rooms = getRooms();
+  const dayIv = filtered().flatMap((c) => c.interviews.filter((iv) => iv.at && iv.at.startsWith(roomsDay)).map((iv) => ({ c, iv })));
+  const others = dayIv.filter(({ iv }) => !rooms.includes(iv.location));
+  const rows = [...rooms.map((r) => ({ name: r, items: dayIv.filter(({ iv }) => iv.location === r) }))];
+  if (others.length) rows.push({ name: '其他／未指定', items: others, other: true });
+
+  const span = (DAY_END - DAY_START) * 60;
+  const pos = (at) => { const t = new Date(at); return ((t.getHours() - DAY_START) * 60 + t.getMinutes()) / span * 100; };
+  const hours = [];
+  for (let h = DAY_START; h <= DAY_END; h++) hours.push(h);
+  const nowLine = roomsDay === dateKey(new Date())
+    ? (() => { const n = new Date(); const p = ((n.getHours() - DAY_START) * 60 + n.getMinutes()) / span * 100; return p >= 0 && p <= 100 ? `<span class="now-line" style="left:${p}%"></span>` : ''; })() : '';
+
+  const used = rows.filter((r) => !r.other && !isOnline(r.name)).map((r) => r.items.length);
+  $('#roomsGrid').innerHTML = `
+    <div class="room-row room-head">
+      <div class="room-name">會議室<small>${dayIv.length} 場面試</small></div>
+      <div class="timeline hours">${hours.map((h) => `<span style="left:${(h - DAY_START) / (DAY_END - DAY_START) * 100}%">${h}:00</span>`).join('')}</div>
+    </div>
+    ${rows.map((row) => `
+      <div class="room-row ${row.other ? 'other' : ''}">
+        <div class="room-name">${esc(row.name)}<small>${isOnline(row.name) ? '線上' : row.other ? '不在會議室清單' : `${row.items.length} 場`}</small></div>
+        <div class="timeline" data-room="${row.other ? '' : esc(row.name)}">
+          ${nowLine}
+          ${row.items.map(({ c, iv }) => {
+            const left = Math.max(0, pos(iv.at));
+            const width = Math.min(100 - left, (Number(iv.duration) || 60) / span * 100);
+            const clash = findConflicts(iv, c.id).some((h) => h.why.some((w) => w.includes('已被預約')));
+            const idx = STAGES.indexOf(c.stage);
+            return `<button type="button" class="slot ${clash ? 'clash' : ''}" data-id="${c.id}" style="left:${left}%;width:${width}%;--c:var(--s${idx})"
+              data-tip="${esc(`${iv.at.slice(11)}～${toLocalInput(new Date(ivEnd(iv))).slice(11)}\n${dn(c)}｜${c.position}｜${iv.round}\n面試官：${iv.interviewer || '—'}${clash ? '\n⚠ 同一時間這間會議室被重複預約' : ''}`)}">
+              <b>${iv.at.slice(11)}</b> ${esc(dn(c))}・${esc(iv.round)}</button>`;
+          }).join('')}
+        </div>
+      </div>`).join('')}
+    <p class="rooms-summary">實體會議室今天共 ${used.reduce((s, n) => s + n, 0)} 場；${used.filter((n) => n === 0).length} 間整天空著。</p>`;
+}
+
+$('#roomsGrid').addEventListener('click', (e) => {
+  const slot = e.target.closest('.slot');
+  if (slot) return openModal(slot.dataset.id);
+  const tl = e.target.closest('.timeline[data-room]');
+  if (!tl || !tl.dataset.room) return;
+  // 點空白處：換算成時間（以 30 分鐘為單位），帶入這間會議室
+  const rect = tl.getBoundingClientRect();
+  const mins = Math.round(((e.clientX - rect.left) / rect.width) * (DAY_END - DAY_START) * 60 / 30) * 30;
+  const h = DAY_START + Math.floor(mins / 60), m = mins % 60;
+  if (h >= DAY_END) return;
+  openModal(null, { date: roomsDay, time: `${pad(h)}:${pad(m)}`, location: tl.dataset.room });
+});
+const shiftDay = (n) => { const d = new Date(`${roomsDay}T00:00`); d.setDate(d.getDate() + n); roomsDay = dateKey(d); renderRooms(); };
+$('#prevDay').addEventListener('click', () => shiftDay(-1));
+$('#nextDay').addEventListener('click', () => shiftDay(1));
+$('#roomsToday').addEventListener('click', () => { roomsDay = dateKey(new Date()); renderRooms(); });
+$('#roomsDate').addEventListener('change', (e) => { if (e.target.value) { roomsDay = e.target.value; renderRooms(); } });
+
+// ---------- 會議室管理 ----------
+let roomDraft = [];
+const roomDialog = $('#roomDialog');
+function renderRoomList() {
+  $('#roomList').innerHTML = roomDraft.map((r, i) => `
+    <li>
+      <span class="room-kind ${isOnline(r) ? 'online' : ''}">${isOnline(r) ? '線上' : '實體'}</span>
+      <input value="${esc(r)}" data-i="${i}" maxlength="30" aria-label="會議室名稱">
+      <span class="room-count">${candidates.reduce((s, c) => s + c.interviews.filter((iv) => iv.location === r).length, 0)} 場</span>
+      <button type="button" class="link-btn" data-del="${i}">刪除</button>
+    </li>`).join('');
+}
+$('#roomMgrBtn').addEventListener('click', () => { roomDraft = [...getRooms()]; renderRoomList(); roomDialog.showModal(); });
+$('#roomList').addEventListener('input', (e) => {
+  if (e.target.dataset.i !== undefined) {
+    roomDraft[e.target.dataset.i] = e.target.value;
+    const kind = e.target.parentElement.querySelector('.room-kind');
+    kind.textContent = isOnline(e.target.value) ? '線上' : '實體';
+    kind.classList.toggle('online', isOnline(e.target.value));
+  }
+});
+$('#roomList').addEventListener('click', (e) => {
+  const i = e.target.dataset.del;
+  if (i !== undefined) { roomDraft.splice(Number(i), 1); renderRoomList(); }
+});
+const addRoom = () => {
+  const v = $('#roomNew').value.trim();
+  if (!v) return;
+  if (roomDraft.includes(v)) return toast('已經有這間會議室了');
+  roomDraft.push(v); $('#roomNew').value = ''; renderRoomList(); $('#roomNew').focus();
+};
+$('#roomAddBtn').addEventListener('click', addRoom);
+$('#roomNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addRoom(); } });
+$('#roomCancel').addEventListener('click', () => roomDialog.close());
+$('#roomForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const old = getRooms();
+  const next = roomDraft.map((r) => r.trim()).filter(Boolean).filter((r, i, a) => a.indexOf(r) === i);
+  if (!next.length) return toast('至少要保留一間會議室');
+  // 改名的會議室：同步更新已排定面試的地點
+  old.forEach((name, i) => {
+    const renamed = roomDraft[i] !== undefined && roomDraft.length === old.length ? roomDraft[i].trim() : null;
+    if (renamed && renamed !== name) candidates.forEach((c) => c.interviews.forEach((iv) => { if (iv.location === name) iv.location = renamed; }));
+  });
+  meta.rooms = next;
+  saveMeta();
+  save();
+  roomDialog.close();
+  render();
+  toast(`已儲存 ${next.length} 間會議室`);
+});
 
 function renderStats() {
   const items = [
@@ -437,7 +582,7 @@ function renderBanners() {
       <div class="banner">
         <span><b>${msg}</b>。清除瀏覽器資料或換電腦時，資料會全部遺失。</span>
         <span class="banner-actions">
-          <button class="btn small" data-action="export">立即匯出備份</button>
+          <button class="btn small" data-action="export">立即匯出 Excel 備份</button>
           <button class="btn ghost small" data-action="snooze">明天再提醒</button>
         </span>
       </div>`);
@@ -1193,7 +1338,7 @@ function roundHtml(r) {
         <label>面試時間<input type="datetime-local" class="r-at" value="${esc(r.at)}"></label>
         <label>時長（分鐘）<input type="number" class="r-duration" min="15" max="480" step="15" value="${r.duration}"></label>
         <label>面試官<input class="r-interviewer" maxlength="40" value="${esc(r.interviewer)}"></label>
-        <label>地點／方式<input class="r-location" maxlength="60" value="${esc(r.location)}" placeholder="例：會議室 A、Google Meet"></label>
+        <label>地點／會議室<input class="r-location" maxlength="60" value="${esc(r.location)}" list="roomOptions" placeholder="點一下選會議室，或自行輸入"></label>
         <label>這輪評分<select class="r-rating">${ratingOpts}</select></label>
       </div>
       <label>這輪評語<textarea class="r-feedback pii" rows="2" placeholder="面試官對這一輪的評價">${esc(r.feedback)}</textarea></label>
@@ -1232,7 +1377,7 @@ function checkRoundConflicts() {
     const el = fs.querySelector('.r-conflict');
     el.hidden = !hits.length;
     el.textContent = hits.length
-      ? `時間重疊：${hits.map((h) => `${meta.masked ? maskName(h.name) : h.name} 的${h.iv.round}（${formatTime(h.iv.at)}）`).join('、')}`
+      ? `撞期：${hits.map((h) => `${meta.masked ? maskName(h.name) : h.name} 的${h.iv.round}（${formatTime(h.iv.at)}，${h.why.join('、')}）`).join('；')}`
       : '';
   });
 }
@@ -1283,7 +1428,14 @@ function openModal(id, presetDate) {
     form.elements.stage.value = presetDate ? '一面' : '投遞';
     currentRating = 0;
   }
-  if (presetDate) rounds.push(newRound(rounds, `${presetDate}T10:00`));
+  // presetDate 可以是 '2026-10-09'（從月曆點進來），或 { date, time, location }（從會議室時間軸點進來）
+  if (presetDate) {
+    const p = typeof presetDate === 'string' ? { date: presetDate, time: '10:00' } : presetDate;
+    const r = newRound(rounds, `${p.date}T${p.time}`);
+    if (p.location) r.location = p.location;
+    rounds.push(r);
+  }
+  $('#roomOptions').innerHTML = getRooms().map((r) => `<option value="${esc(r)}">`).join('');
 
   renderRounds(rounds);
   renderStars();
@@ -1469,6 +1621,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
     $('#boardView').hidden = view !== 'board';
     $('#calendarView').hidden = view !== 'calendar';
+    $('#roomsView').hidden = view !== 'rooms';
     $('#analysisView').hidden = view !== 'analysis';
     render();
   });
@@ -1486,40 +1639,14 @@ $('#maskBtn').addEventListener('click', () => {
   toast(meta.masked ? '已開啟遮蔽模式：姓名與聯絡資料已隱藏' : '已關閉遮蔽模式');
 });
 
-// ---------- 匯出／匯入／還原 ----------
+// ---------- 備份／還原 ----------
+// 備份改用「匯出 Excel」；備份提醒橫幅上的按鈕也是匯出 Excel
 function exportBackup() {
-  downloadFile(JSON.stringify(candidates, null, 2), `面試看板備份-${dateKey(new Date())}.json`, 'application/json');
-  meta.lastExport = nowIso();
-  delete meta.snoozeUntil;
-  saveMeta();
-  render();
-  toast('已下載備份檔，請存放在安全的地方，不要上傳到公開網站');
+  $('#xlsxExportBtn').click();
 }
 
-$('#exportBtn').addEventListener('click', exportBackup);
-
-$('#importInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  let raw;
-  try {
-    raw = JSON.parse(await file.text());
-  } catch (err) {
-    return alert('匯入失敗：無法讀取這個檔案，請確認是從本看板匯出的 JSON。');
-  }
-  const data = migrate(raw);
-  if (!data.length) return alert('匯入失敗：檔案裡沒有有效的候選人資料。');
-  const skipped = Array.isArray(raw) ? raw.length - data.length : 0;
-  if (!confirm(`要用備份檔的 ${data.length} 筆資料取代目前的 ${candidates.length} 筆嗎？${skipped ? `\n（有 ${skipped} 筆格式不正確，會略過）` : ''}`)) return;
-  candidates = data;
-  save();
-  render();
-  toast(`已匯入 ${data.length} 位候選人`);
-});
-
 $('#resetBtn').addEventListener('click', () => {
-  if (candidates.length && !confirm(`還原示範資料會取代目前的 ${candidates.length} 筆資料，無法復原。\n建議先「匯出 JSON」備份。確定要還原嗎？`)) return;
+  if (candidates.length && !confirm(`還原示範資料會取代目前的 ${candidates.length} 筆資料，無法復原。\n建議先「匯出 Excel」備份。確定要還原嗎？`)) return;
   candidates = sampleData();
   save();
   render();
@@ -1548,7 +1675,7 @@ $('#banners').addEventListener('click', (e) => {
 // 清除所有資料（招募結束、或要交接電腦時使用）
 $('#clearAllBtn').addEventListener('click', () => {
   if (!candidates.length) return toast('目前沒有任何資料');
-  const answer = prompt(`這會永久刪除全部 ${candidates.length} 位候選人的資料，無法復原。\n建議先「匯出 JSON」備份。\n\n確定要刪除，請輸入「刪除」兩個字：`);
+  const answer = prompt(`這會永久刪除全部 ${candidates.length} 位候選人的資料，無法復原。\n建議先「匯出 Excel」備份。\n\n確定要刪除，請輸入「刪除」兩個字：`);
   if (answer === null) return;
   if (answer.trim() !== '刪除') return toast('輸入不正確，已取消');
   candidates = [];
@@ -1686,7 +1813,12 @@ $('#xlsxTemplateBtn').addEventListener('click', () => withXlsx((X) => {
 $('#xlsxExportBtn').addEventListener('click', () => withXlsx((X) => {
   if (!candidates.length) return toast('目前沒有資料可以匯出');
   X.writeFile(buildWorkbook(X, candidatesToRows(candidates)), `面試看板_${dateKey(new Date())}.xlsx`);
-  toast('已匯出 Excel。檔案內含個資，請妥善保存');
+  // 匯出 Excel 就算完成一次備份
+  meta.lastExport = nowIso();
+  delete meta.snoozeUntil;
+  saveMeta();
+  render();
+  toast('已匯出 Excel 備份。檔案內含個資，請妥善保存，不要上傳到公開網站');
 }));
 
 // 讀取 Excel → 整理成候選人（同姓名＋職缺的多列合併成多輪面試）
@@ -1832,7 +1964,7 @@ $('#importForm').addEventListener('submit', (e) => {
   const f = $('#importForm').elements;
   let incoming = pendingImport.list;
   if (f.mode.value === 'replace') {
-    if (candidates.length && !confirm(`這會刪除目前的 ${candidates.length} 位候選人，改成 Excel 裡的 ${incoming.length} 位，無法復原。\n建議先「匯出 Excel」或「匯出 JSON」備份。確定嗎？`)) return;
+    if (candidates.length && !confirm(`這會刪除目前的 ${candidates.length} 位候選人，改成 Excel 裡的 ${incoming.length} 位，無法復原。\n建議先「匯出 Excel」備份。確定嗎？`)) return;
     candidates = incoming;
   } else {
     if (f.skipDup.checked) incoming = incoming.filter((c) => !isExisting(c));
