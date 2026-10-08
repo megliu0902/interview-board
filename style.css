@@ -492,3 +492,59 @@ dialog { border-radius: 18px; border: none; box-shadow: 0 20px 60px rgba(0, 40, 
   .top { flex-direction: column; align-items: flex-start; }
   .top .brand-logo img { height: 40px; }
 }
+
+/* =========================================================
+   活潑感：插圖、彩色圖示、背景圓點
+   ========================================================= */
+/* 背景淡淡的藍、橘圓形裝飾 */
+body {
+  background-image:
+    radial-gradient(circle at 92% 18%, rgba(248, 152, 29, .10) 0 120px, transparent 121px),
+    radial-gradient(circle at 4% 55%, rgba(0, 106, 224, .07) 0 160px, transparent 161px),
+    radial-gradient(circle at 70% 95%, rgba(90, 160, 240, .08) 0 140px, transparent 141px);
+  background-attachment: fixed;
+}
+
+/* 標題區插圖 */
+.top { position: relative; overflow: hidden; }
+.top::before {
+  content: ""; position: absolute; right: -60px; top: -60px; width: 220px; height: 220px;
+  border-radius: 50%; background: rgba(255, 255, 255, .08);
+}
+.top .hero-art { margin-left: auto; width: 250px; height: auto; flex: none; position: relative; animation: float 5s ease-in-out infinite; }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .top .hero-art { animation: none; } }
+
+/* 各階段彩色圖示 */
+.col-head h3 { display: flex; align-items: center; gap: 10px; }
+.col-head h3 > span { display: flex; flex-direction: column; }
+.stage-icon { width: 38px; height: 38px; flex: none; transition: transform .2s; }
+.column:hover .stage-icon { transform: rotate(-8deg) scale(1.08); }
+
+/* 統計改成膠囊卡片 */
+.stats { gap: 10px; }
+.stats span {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 14px 6px 8px; box-shadow: 0 2px 6px rgba(0, 60, 140, .05);
+}
+.stats span i {
+  font-style: normal; width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand-soft); font-size: 14px;
+}
+.stats .alert { border-color: #ffd1a1; background: #fff8ef; }
+.stats .alert i { background: #ffe6c7; }
+
+/* 卡片多一點彈性 */
+.card { transition: transform .15s, box-shadow .15s, border-color .15s; }
+.card:hover { transform: translateY(-3px); }
+.empty { flex-direction: column; padding: 18px 0; text-align: center; }
+.empty img { width: 64px; opacity: 1; }
+
+@media (max-width: 700px) {
+  .top .hero-art { display: none; }
+}
+.top .hero-art { background: none; padding: 0; border-radius: 0; height: auto; }
+.col-head h3 { font-size: 19px; white-space: nowrap; }
+.col-head small { white-space: nowrap; }
