@@ -641,3 +641,10 @@ body {
   background: #f1f5fb; font-variant-numeric: tabular-nums; cursor: default;
 }
 .vseg.muted { background: #b8c5d3; }
+
+/* 部門 */
+.dept-tag {
+  display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--primary); font-size: 12px; font-weight: 700;
+}
+#deptFilter { max-width: 200px; }
