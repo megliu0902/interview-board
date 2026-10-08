@@ -154,71 +154,136 @@ function saveMeta() {
   try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* 忽略 */ }
 }
 
-// 示範資料（日期會依今天自動調整）
+// 示範資料（日期會依今天自動調整；人名與聯絡方式皆為虛構）
+// 用固定的亂數種子產生，所以每次「還原示範資料」看到的內容都一樣
 function sampleData() {
-  const at = (dayOffset, hour, min = 0) => {
+  let seed = 20261008;
+  const rnd = () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (list) => list[Math.floor(rnd() * list.length)];
+  const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
+
+  // 平日上班時間的面試時段（遇到週末自動順延）
+  const SLOTS = [[9, 30], [10, 0], [10, 30], [11, 0], [13, 30], [14, 0], [14, 30], [15, 0], [15, 30], [16, 0], [16, 30]];
+  const slot = (dayOffset) => {
     const d = new Date();
     d.setDate(d.getDate() + dayOffset);
-    d.setHours(hour, min, 0, 0);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + (dayOffset >= 0 ? 1 : -1));
+    const [h, m] = pick(SLOTS);
+    d.setHours(h, m, 0, 0);
     return toLocalInput(d);
   };
-  const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
-  // path：[[階段, 幾天前進入], …]，自動產生歷程
-  const mk = (c, path) => ({
-    ...c,
-    history: path.map(([stage, d]) => ({ stage, at: ago(d) })),
-    createdAt: ago(path[0][1]),
-    stageSince: ago(path[path.length - 1][1]),
-    stage: path[path.length - 1][0]
-  });
-  const iv = (round, day, hour, interviewer, extra = {}) =>
-    ({ round, at: at(day, hour, extra.min || 0), interviewer, location: extra.location || '', rating: extra.rating || 0, feedback: extra.feedback || '' });
 
-  return migrate([
-    mk({ name: '王小明', position: '前端工程師', email: 'ming@example.com', next: '通知電話篩選' }, [['投遞', 1]]),
-    mk({ name: '陳怡君', position: 'UI 設計師', notes: '作品集很有質感', next: '約一面' }, [['投遞', 10], ['履歷篩選', 7]]),
-    mk({ name: '林志豪', position: '前端工程師', next: '準備面試題綱',
-      interviews: [iv('一面', 0, 15, '張經理', { min: 30, location: '會議室 A' })] },
-    [['投遞', 8], ['履歷篩選', 6], ['一面', 2]]),
-    mk({ name: '黃雅婷', position: '專案經理', next: '面試前寄出題目',
-      interviews: [iv('一面', 1, 10, '李主任', { location: 'Google Meet' })] },
-    [['投遞', 6], ['履歷篩選', 5], ['一面', 3]]),
-    mk({ name: '周文傑', position: '行銷專員', next: '決定是否進二面',
-      interviews: [iv('一面', -2, 11, '王協理', { rating: 3, feedback: '表達清楚，經驗略少' })] },
-    [['投遞', 14], ['履歷篩選', 11], ['一面', 4]]),
-    mk({ name: '吳建宏', position: '後端工程師', rating: 4, next: '安排與團隊午餐',
-      interviews: [
-        iv('一面', -9, 14, '張經理', { rating: 4, feedback: '基礎扎實，溝通順暢' }),
-        iv('二面', 3, 14, '陳技術長', { location: '會議室 B' })
-      ] },
-    [['投遞', 20], ['履歷篩選', 17], ['一面', 11], ['二面', 2]]),
-    mk({ name: '蔡佩珊', position: 'UI 設計師', rating: 5, notes: '期望薪資 55K', next: '寄出 Offer 信',
-      interviews: [
-        iv('一面', -15, 10, '林總監', { rating: 5, feedback: '作品集與思路都很好' }),
-        iv('二面', -8, 15, '執行長', { rating: 5, feedback: '價值觀契合，推薦錄取' })
-      ] },
-    [['投遞', 25], ['履歷篩選', 22], ['一面', 16], ['二面', 9], ['Offer', 1]]),
-    mk({ name: '劉家瑜', position: '行銷專員', rating: 4, notes: '對方考慮中', next: '三天後追蹤',
-      interviews: [iv('一面', -20, 11, '王協理', { rating: 4 }), iv('二面', -14, 16, '行銷總監', { rating: 4 })] },
-    [['投遞', 30], ['履歷篩選', 27], ['一面', 21], ['二面', 15], ['Offer', 6]]),
-    mk({ name: '鄭家豪', position: '後端工程師', result: '未錄取', rating: 2,
-      interviews: [iv('一面', -33, 10, '張經理', { rating: 2, feedback: '系統設計題答不出來' })] },
-    [['投遞', 40], ['履歷篩選', 38], ['一面', 34], ['結案', 30]]),
-    mk({ name: '許庭瑋', position: '前端工程師', result: '錄取', rating: 5, notes: '下週一報到', next: '準備設備與帳號',
-      interviews: [iv('一面', -38, 14, '張經理', { rating: 5 }), iv('二面', -32, 10, '陳技術長', { rating: 5 })] },
-    [['投遞', 45], ['履歷篩選', 43], ['一面', 39], ['二面', 33], ['Offer', 27], ['結案', 24]]),
-    mk({ name: '何思穎', position: 'UI 設計師', result: '候選人婉拒', rating: 4, notes: '接受其他公司 Offer',
-      interviews: [iv('一面', -41, 15, '林總監', { rating: 4 }), iv('二面', -35, 11, '執行長', { rating: 4 })] },
-    [['投遞', 50], ['履歷篩選', 47], ['一面', 42], ['二面', 36], ['Offer', 30], ['結案', 26]]),
-    mk({ name: '蘇冠廷', position: '專案經理', result: '未錄取', notes: '經驗不符' },
-      [['投遞', 35], ['履歷篩選', 33], ['結案', 32]]),
-    mk({ name: '江雨晴', position: '行銷專員', result: '錄取', rating: 5,
-      interviews: [iv('一面', -50, 10, '王協理', { rating: 5 }), iv('二面', -44, 14, '行銷總監', { rating: 5 })] },
-    [['投遞', 60], ['履歷篩選', 56], ['一面', 51], ['二面', 45], ['Offer', 38], ['結案', 35]]),
-    mk({ name: '楊子豪', position: '後端工程師', result: '未錄取', notes: '薪資期望落差',
-      interviews: [iv('一面', -30, 16, '張經理', { rating: 4 }), iv('二面', -25, 10, '陳技術長', { rating: 3 })] },
-    [['投遞', 38], ['履歷篩選', 36], ['一面', 31], ['二面', 26], ['結案', 22]])
-  ]);
+  const POSITIONS = [
+    { name: '前端工程師', first: '張經理', second: '陳技術長' },
+    { name: '後端工程師', first: '張經理', second: '陳技術長' },
+    { name: 'UI 設計師', first: '林總監', second: '執行長' },
+    { name: '專案經理', first: '李主任', second: '營運長' },
+    { name: '行銷專員', first: '王協理', second: '行銷總監' },
+    { name: '資料分析師', first: '黃經理', second: '陳技術長' },
+    { name: '業務代表', first: '吳經理', second: '業務副總' },
+    { name: '人資專員', first: '人資主管', second: '營運長' },
+    { name: '客服專員', first: '客服主管', second: '營運長' }
+  ];
+  const NAMES = [
+    '王小明', '陳怡君', '林志豪', '黃雅婷', '周文傑', '吳建宏', '蔡佩珊', '劉家瑜', '鄭家豪', '許庭瑋',
+    '何思穎', '蘇冠廷', '江雨晴', '楊子豪', '李宗翰', '張雅筑', '謝承恩', '郭品妤', '曾柏翰', '洪詩涵',
+    '邱冠宇', '廖心怡', '賴俊宏', '徐子晴', '葉家銘', '高郁婷', '簡志偉', '游舒涵', '詹凱文', '施宛儒',
+    '方振宇', '潘怡萱', '杜承翰', '羅佳穎', '戴宇軒', '范靜宜', '傅彥廷', '侯欣妤', '魏冠霖', '鍾雅琪'
+  ];
+  const LOCATIONS = ['會議室 A', '會議室 B', '總部 5F 會議室', 'Google Meet', 'Teams 視訊'];
+  const GOOD = ['邏輯清楚，回答有條理', '實作經驗豐富，作品完整', '溝通順暢，主動提問', '學習動機強，態度積極',
+    '對產業有自己的見解', '團隊合作經驗豐富', '技術題全部答對', '價值觀契合，推薦進下一關'];
+  const SO_SO = ['經驗略少，但潛力不錯', '表達稍緊張，內容尚可', '專業不錯，薪資期望偏高', '需要再確認穩定度'];
+  const BAD = ['核心技能不足', '對職務內容理解有落差', '溝通表達需要加強', '經驗與職缺需求不符'];
+  const NOTES = ['作品集很有質感', '期望薪資 55K', '可配合下個月到職', '有外商工作經驗', '目前在職，需提前一個月通知',
+    '朋友內推', '英文能力佳，可面對海外客戶', '曾參與大型專案', '希望可以混合辦公', '已拿到其他公司 Offer'];
+  const NEXT = {
+    投遞: ['通知電話篩選', '確認履歷內容', '轉給用人主管看履歷'],
+    履歷篩選: ['約一面', '電話確認意願', '等用人主管回覆'],
+    一面: ['面試前寄出題目', '準備面試題綱', '決定是否進二面', '整理面試評分表'],
+    二面: ['安排與團隊午餐', '確認薪資期望', '主管討論錄取與否'],
+    Offer: ['寄出 Offer 信', '三天後追蹤', '確認到職日', '協商薪資細節']
+  };
+
+  // 每位候選人的「目前狀態」：讓每個欄位都有人，也有足夠的結案資料做分析
+  const PLAN = [
+    ...Array(6).fill(['投遞']), ...Array(6).fill(['履歷篩選']), ...Array(8).fill(['一面']),
+    ...Array(6).fill(['二面']), ...Array(4).fill(['Offer']),
+    ...Array(4).fill(['結案', '錄取']), ...Array(4).fill(['結案', '未錄取']), ...Array(2).fill(['結案', '候選人婉拒'])
+  ];
+
+  let todayLeft = 3;   // 保證今天有幾場面試，畫面才熱鬧
+  const list = PLAN.map(([stage, result], i) => {
+    const pos = POSITIONS[(i * 4) % POSITIONS.length];
+    const closed = stage === '結案';
+
+    // 結案前最後走到哪一關
+    let lastIdx = STAGES.indexOf(stage);
+    if (closed) lastIdx = result === '錄取' ? 4 : result === '候選人婉拒' ? pick([3, 4]) : pick([1, 2, 2, 3]);
+    const seq = STAGES.slice(0, lastIdx + 1);
+    if (closed) seq.push('結案');
+
+    // 由近到遠往回推每一關的進入時間（幾天前）
+    const stuck = !closed && stage !== '投遞' && rnd() < 0.2;
+    const times = new Array(seq.length);
+    times[seq.length - 1] = closed ? int(3, 55) : stuck ? int(6, 11) : rnd() * 4;
+    for (let k = seq.length - 2; k >= 0; k--) times[k] = times[k + 1] + int(2, 6) + rnd();
+
+    // 面試紀錄
+    const interviews = [];
+    const addRound = (round, interviewer, idx) => {
+      const isCurrent = !closed && seq[seq.length - 1] === round;
+      let offset;
+      if (isCurrent && !stuck && todayLeft > 0) { offset = 0; todayLeft--; }
+      else if (isCurrent && !stuck && rnd() < 0.9) offset = pick([0, 0, 1, 1, 2, 2, 3, 4, 5, 7, 9, 12]); // 已排定、還沒面（多集中在近幾天）
+      else offset = -Math.max(1, Math.floor(times[idx]) - int(1, 2));           // 已經面過
+      const done = offset < 0;
+      const failedHere = closed && result === '未錄取' && lastIdx === idx;
+      interviews.push({
+        round, interviewer, at: slot(offset), duration: pick([45, 60, 60, 90]), location: pick(LOCATIONS),
+        rating: done ? (failedHere ? int(1, 2) : int(3, 5)) : 0,
+        feedback: done ? (failedHere ? pick(BAD) : rnd() < 0.7 ? pick(GOOD) : pick(SO_SO)) : ''
+      });
+    };
+    // 部分履歷篩選中的人先排電話篩選
+    if ((stage === '履歷篩選' && rnd() < 0.7) || (stage === '投遞' && rnd() < 0.3)) {
+      interviews.push({ round: '電話篩選', interviewer: '人資專員', at: slot(pick([0, 1, 2, 3, 6])), duration: 30, location: '電話', rating: 0, feedback: '' });
+    }
+    if (seq.includes('一面')) addRound('一面', pos.first, 2);
+    if (seq.includes('二面')) addRound('二面', pos.second, 3);
+
+    const rated = interviews.filter((r) => r.rating);
+    return {
+      name: NAMES[i],
+      position: pos.name,
+      email: `candidate${pad(i + 1)}@example.com`,
+      phone: `09${int(10, 89)}-${int(100, 999)}-${int(100, 999)}`,
+      stage, result: result || '',
+      rating: lastIdx >= 4 && rated.length ? Math.round(rated.reduce((s, r) => s + r.rating, 0) / rated.length) : 0,
+      notes: rnd() < 0.5 ? pick(NOTES) : '',
+      next: closed ? (result === '錄取' ? pick(['準備設備與帳號', '安排新人訓練', '寄送報到通知']) : '') : pick(NEXT[stage]),
+      history: seq.map((s, k) => ({ stage: s, at: ago(times[k]) })),
+      createdAt: ago(times[0]),
+      stageSince: ago(times[seq.length - 1]),
+      interviews
+    };
+  });
+
+  // 重複投遞的例子：之前未錄取的人，這次改投別的職缺
+  const before = list.find((c) => c.result === '未錄取');
+  list.push({
+    name: before.name, position: '客服專員', email: before.email, phone: before.phone,
+    stage: '投遞', next: '確認上次未錄取原因', notes: '曾應徵過其他職缺',
+    history: [{ stage: '投遞', at: ago(0.5) }], createdAt: ago(0.5), stageSince: ago(0.5), interviews: []
+  });
+
+  return migrate(list);
 }
 
 // ---------- 面試相關判斷 ----------
