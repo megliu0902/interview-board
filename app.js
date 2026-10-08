@@ -318,15 +318,15 @@ function render() {
 
 function renderStats() {
   const items = [
-    ['候選人總數', candidates.length],
-    ['目前顯示', filtered().length],
-    ['進行中', candidates.filter((c) => c.stage !== '結案').length],
-    [`${SOON_HOURS} 小時內面試`, candidates.filter(isSoon).length, true],
-    [`卡關 ${STUCK_DAYS} 天以上`, candidates.filter(isStuck).length, true],
-    ['已錄取', candidates.filter((c) => c.result === '錄取').length]
+    ['👥', '候選人總數', candidates.length],
+    ['🔍', '目前顯示', filtered().length],
+    ['🔥', '進行中', candidates.filter((c) => c.stage !== '結案').length],
+    ['⏰', `${SOON_HOURS} 小時內面試`, candidates.filter(isSoon).length, true],
+    ['⏳', `卡關 ${STUCK_DAYS} 天以上`, candidates.filter(isStuck).length, true],
+    ['🎉', '已錄取', candidates.filter((c) => c.result === '錄取').length]
   ];
-  $('#stats').innerHTML = items.map(([label, n, alert]) =>
-    `<span class="${alert && n ? 'alert' : ''}">${label}<b>${n}</b></span>`
+  $('#stats').innerHTML = items.map(([icon, label, n, alert]) =>
+    `<span class="${alert && n ? 'alert' : ''}"><i aria-hidden="true">${icon}</i>${label}<b>${n}</b></span>`
   ).join('');
 }
 
@@ -423,7 +423,7 @@ function renderBoard() {
     return `
       <section class="column" data-stage="${stage}">
         <div class="col-head">
-          <h3><span class="col-num">${pad(i + 1)}</span>${stage}</h3>
+          <h3><img class="stage-icon" src="images/stage-${i + 1}.svg" alt=""><span><span class="col-num">${pad(i + 1)}</span>${stage}</span></h3>
           <small>${cards.length} 人</small>
         </div>
         ${cards.length ? cards.map(cardHtml).join('') : '<p class="empty"><img src="images/empty.svg" alt="">沒有符合的候選人</p>'}
