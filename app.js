@@ -71,7 +71,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 4;
+const DEMO_VERSION = 5;
 upgradeDemo();
 
 function upgradeDemo() {
@@ -140,6 +140,7 @@ function migrate(list) {
         name: str(c.name, 40),
         position: str(c.position, 40),
         manager: str(c.manager, 40),
+        department: str(c.department, 40),
         email: str(c.email, 100),
         phone: str(c.phone, 30),
         stage,
@@ -200,15 +201,15 @@ function sampleData() {
   };
 
   const POSITIONS = [
-    { name: '前端工程師', first: '張經理', second: '陳技術長' },
-    { name: '後端工程師', first: '張經理', second: '陳技術長' },
-    { name: 'UI 設計師', first: '林總監', second: '執行長' },
-    { name: '專案經理', first: '李主任', second: '營運長' },
-    { name: '行銷專員', first: '王協理', second: '行銷總監' },
-    { name: '資料分析師', first: '黃經理', second: '陳技術長' },
-    { name: '業務代表', first: '吳經理', second: '業務副總' },
-    { name: '人資專員', first: '人資主管', second: '營運長' },
-    { name: '客服專員', first: '客服主管', second: '營運長' }
+    { name: '前端工程師', dept: '研發部', first: '張經理', second: '陳技術長' },
+    { name: '後端工程師', dept: '研發部', first: '張經理', second: '陳技術長' },
+    { name: 'UI 設計師', dept: '產品設計部', first: '林總監', second: '執行長' },
+    { name: '專案經理', dept: '產品設計部', first: '李主任', second: '營運長' },
+    { name: '行銷專員', dept: '行銷部', first: '王協理', second: '行銷總監' },
+    { name: '資料分析師', dept: '研發部', first: '黃經理', second: '陳技術長' },
+    { name: '業務代表', dept: '業務部', first: '吳經理', second: '業務副總' },
+    { name: '人資專員', dept: '人力資源部', first: '人資主管', second: '營運長' },
+    { name: '客服專員', dept: '客服部', first: '客服主管', second: '營運長' }
   ];
   const NAMES = [
     '王小明', '陳怡君', '林志豪', '黃雅婷', '周文傑', '吳建宏', '蔡佩珊', '劉家瑜', '鄭家豪', '許庭瑋',
@@ -240,7 +241,7 @@ function sampleData() {
 
   let todayLeft = 3;   // 保證今天有幾場面試，畫面才熱鬧
   const list = PLAN.map(([stage, result], i) => {
-    const pos = POSITIONS[(i * 4) % POSITIONS.length];
+    const pos = POSITIONS[(i * 7 + 3) % POSITIONS.length];
     const closed = stage === '結案';
 
     // 結案前最後走到哪一關
@@ -283,6 +284,7 @@ function sampleData() {
       name: NAMES[i],
       position: pos.name,
       manager: pos.first,   // 面試主管＝該職缺的一面面試官
+      department: pos.dept,
       email: `candidate${pad(i + 1)}@example.com`,
       phone: `09${int(10, 89)}-${int(100, 999)}-${int(100, 999)}`,
       stage, result: result || '',
@@ -299,7 +301,7 @@ function sampleData() {
   // 重複投遞的例子：之前未錄取的人，這次改投別的職缺
   const before = list.find((c) => c.result === '未錄取');
   list.push({
-    name: before.name, position: '客服專員', manager: '客服主管', email: before.email, phone: before.phone,
+    name: before.name, position: '客服專員', manager: '客服主管', department: '客服部', email: before.email, phone: before.phone,
     stage: '投遞', next: '確認上次未錄取原因', notes: '曾應徵過其他職缺',
     history: [{ stage: '投遞', at: ago(0.5) }], createdAt: ago(0.5), stageSince: ago(0.5), interviews: []
   });
@@ -384,11 +386,13 @@ function filtered() {
   const q = $('#searchInput').value.trim().toLowerCase();
   const pos = $('#positionFilter').value;
   const mgr = $('#managerFilter').value;
+  const dept = $('#deptFilter').value;
   return candidates.filter((c) => {
+    if (dept && (c.department || '未分類') !== dept) return false;
     if (pos && c.position !== pos) return false;
     if (mgr && c.manager !== mgr) return false;
     if (!q) return true;
-    const fields = [c.name, c.position, c.manager, c.notes, c.next, c.email,
+    const fields = [c.name, c.position, c.department, c.manager, c.notes, c.next, c.email,
       ...c.interviews.flatMap((iv) => [iv.interviewer, iv.location, iv.feedback, iv.round])];
     return fields.some((v) => (v || '').toLowerCase().includes(q));
   });
@@ -470,6 +474,15 @@ function renderPositionOptions() {
     managers.map((m) => `<option value="${esc(m)}">${esc(m)}（${candidates.filter((c) => c.manager === m && c.stage !== '結案').length} 位進行中）</option>`).join('');
   msel.value = managers.includes(mkeep) ? mkeep : '';
   $('#managerList').innerHTML = managers.map((m) => `<option value="${esc(m)}">`).join('');
+
+  // 部門下拉選單（沒填部門的歸在「未分類」）
+  const depts = [...new Set(candidates.map((c) => c.department || '未分類'))].sort((a, b) => (a === '未分類') - (b === '未分類') || a.localeCompare(b, 'zh-Hant'));
+  const dsel = $('#deptFilter');
+  const dkeep = dsel.value;
+  dsel.innerHTML = '<option value="">全部部門</option>' +
+    depts.map((d) => `<option value="${esc(d)}">${esc(d)}（${candidates.filter((c) => (c.department || '未分類') === d).length} 位）</option>`).join('');
+  dsel.value = depts.includes(dkeep) ? dkeep : '';
+  $('#deptList').innerHTML = depts.filter((d) => d !== '未分類').map((d) => `<option value="${esc(d)}">`).join('');
 }
 
 function cardHtml(c) {
@@ -503,7 +516,7 @@ function cardHtml(c) {
   return `
     <article class="card ${stuck ? 'stuck' : ''}" draggable="true" data-id="${c.id}">
       <button type="button" class="name">${esc(dn(c))}</button>
-      <span class="role">${esc(c.position)}</span>
+      <span class="role">${esc(c.position)}${c.department ? `<span class="dept-tag">${esc(c.department)}</span>` : ''}</span>
       ${pills.length ? `<div class="pills">${pills.join('')}</div>` : ''}
       ${metaLines.length ? `<div class="meta">${metaLines.join('')}</div>` : ''}
       ${c.stage !== '結案' && !stuck ? `<span class="age">在此階段 ${daysSince(c.stageSince)} 天</span>` : ''}
@@ -609,7 +622,9 @@ function tableHtml(head, rows) {
 function renderAnalysis() {
   const pos = $('#positionFilter').value;
   const mgr = $('#managerFilter').value;
-  const baseList = candidates.filter((c) => (!pos || c.position === pos) && (!mgr || c.manager === mgr));
+  const deptF = $('#deptFilter').value;
+  const baseList = candidates.filter((c) => (!pos || c.position === pos) && (!mgr || c.manager === mgr) &&
+    (!deptF || (c.department || '未分類') === deptF));
   // 分析期間：依「投遞日期」篩選
   const RANGES = { all: '全部期間', 30: '近 30 天', 90: '近 90 天', year: `${new Date().getFullYear()} 年` };
   const inRange = (c) => {
@@ -620,7 +635,7 @@ function renderAnalysis() {
     return true;
   };
   const list = baseList.filter(inRange);
-  const scope = [pos ? `「${esc(pos)}」職缺` : '全部職缺', mgr ? `面試主管「${esc(mgr)}」` : '', RANGES[analysisRange]].filter(Boolean).join('、');
+  const scope = [deptF ? `「${esc(deptF)}」` : '全部部門', pos ? `「${esc(pos)}」職缺` : '全部職缺', mgr ? `面試主管「${esc(mgr)}」` : '', RANGES[analysisRange]].filter(Boolean).join('、');
   const rangeBar = `<div class="range-bar" role="group" aria-label="分析期間">分析期間
     ${Object.entries(RANGES).map(([k, v]) => `<button type="button" data-range="${k}" class="${analysisRange === k ? 'on' : ''}">${v}</button>`).join('')}</div>`;
 
@@ -860,6 +875,36 @@ function renderAnalysis() {
   });
   const ageMax = Math.max(1, ...ageRows.map((r) => r.value));
 
+  // ---- 部門統計 ----
+  const deptOf = (c) => c.department || '未分類';
+  const deptNames = [...new Set(list.map(deptOf))];
+  const deptStats = deptNames.map((d) => {
+    const ds = list.filter((c) => deptOf(c) === d);
+    const dHired = ds.filter((c) => c.result === '錄取');
+    const dClosed = ds.filter((c) => c.stage === '結案');
+    const dOffer = ds.filter((c) => reachedIndex(c) >= 4 && (c.result === '錄取' || c.result === '候選人婉拒'));
+    const dDays = avg(dHired.map((c) => { const e = [...c.history].reverse().find((h) => h.stage === '結案'); return e ? (new Date(e.at) - new Date(c.createdAt)) / DAY : null; }).filter((x) => x !== null));
+    const dIv = ds.flatMap((c) => c.interviews.filter((iv) => iv.at));
+    const dActive = ds.filter((c) => c.stage !== '結案');
+    const dStuck = dActive.filter(isStuck).length;
+    return {
+      d, n: ds.length, active: dActive.length, hired: dHired.length,
+      stageCounts: STAGES.slice(0, 5).map((s) => ds.filter((c) => c.stage === s).length),
+      lost: ds.filter((c) => c.result === '未錄取' || c.result === '候選人婉拒').length,
+      cells: [esc(d), new Set(ds.map((c) => c.position)).size, ds.length, dActive.length,
+        dStuck ? `<span class="pill p-stuck">${dStuck}</span>` : '0',
+        dIv.filter((iv) => ivEnd(iv) <= now).length, dIv.filter((iv) => ivStart(iv) >= now && ivStart(iv) <= now + 7 * DAY).length,
+        ds.filter((c) => reachedIndex(c) >= 4).length, dHired.length, pct(dHired.length, dClosed.length),
+        pct(dOffer.filter((c) => c.result === '錄取').length, dOffer.length), dDays !== null ? `${Math.round(dDays)} 天` : '—']
+    };
+  }).sort((a, b) => b.n - a.n);
+  const deptMax = Math.max(1, ...deptStats.map((x) => x.n));
+  const deptBars = deptStats.map((x) => ({
+    label: x.d, value: x.n,
+    valueHtml: `<b>${x.n}</b>人・進行中 ${x.active}・錄取 ${x.hired}`,
+    tip: `${x.d}：共 ${x.n} 位候選人\n進行中 ${x.active}・錄取 ${x.hired}・未成功 ${x.lost}`
+  }));
+
   // ---- 面試主管比較 ----
   const managers = [...new Set(list.map((c) => c.manager).filter(Boolean))];
   const mgrRows = managers.map((m) => {
@@ -876,7 +921,7 @@ function renderAnalysis() {
   $('#analysisView').innerHTML = `
     <nav class="dash-nav" aria-label="儀表板段落">
       <a href="#a-focus">今日焦點</a><a href="#a-kpi">關鍵指標</a><a href="#a-funnel">漏斗與流程</a>
-      <a href="#a-trend">趨勢</a><a href="#a-heat">熱度圖</a><a href="#a-team">職缺與團隊</a>
+      <a href="#a-dept">部門統計</a><a href="#a-trend">趨勢</a><a href="#a-heat">熱度圖</a><a href="#a-team">職缺與團隊</a>
     </nav>
     ${rangeBar}
     <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」或「面試主管」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
@@ -895,6 +940,26 @@ function renderAnalysis() {
           <div class="kpi"><div class="k-label">${label}</div><div class="k-value">${value}</div><div class="k-sub">${s}</div></div>`).join('')}
         </div></div>`).join('')}
     </section>
+
+    <section id="a-dept">
+      <h3>部門統計</h3>
+      <p class="desc">各部門的招募規模、進度與成效，依候選人數排序；沒有填部門的人歸在「未分類」。</p>
+      ${tableHtml(['部門', '職缺數', '候選人', '進行中', '卡關', '已面試', '未來 7 天面試', '到 Offer', '錄取', '錄取率', 'Offer 接受率', '平均招募天數'], deptStats.map((x) => x.cells))}
+    </section>
+
+    <div class="grid2">
+      <section>
+        <h3>各部門候選人數</h3>
+        <p class="desc">每個部門目前有多少候選人。</p>
+        ${barsHtml(deptBars, deptMax)}
+      </section>
+      <section>
+        <h3>部門 × 階段熱度表</h3>
+        <p class="desc">每個部門的人目前在哪個階段，顏色越深人越多。</p>
+        ${heatHtml(deptStats.map((x) => x.d), [...STAGES.slice(0, 5), '錄取', '未成功'],
+          deptStats.map((x) => [...x.stageCounts, x.hired, x.lost]), '人', (r, c, n) => `${r}・${c}：${n} 人`)}
+      </section>
+    </div>
 
     <button type="button" class="link-btn table-toggle" id="tableToggle">${showTables ? '改用圖表檢視' : '改用表格檢視'}</button>
 
@@ -1209,7 +1274,7 @@ function openModal(id, presetDate) {
 
   let rounds = [];
   if (c) {
-    for (const key of ['name', 'position', 'manager', 'email', 'phone', 'stage', 'result', 'next', 'notes']) {
+    for (const key of ['name', 'position', 'department', 'manager', 'email', 'phone', 'stage', 'result', 'next', 'notes']) {
       form.elements[key].value = c[key] ?? '';
     }
     currentRating = c.rating || 0;
@@ -1235,6 +1300,7 @@ function readForm() {
     name: f.name.value.trim(),
     position: f.position.value.trim(),
     manager: f.manager.value.trim(),
+    department: f.department.value.trim(),
     email: f.email.value.trim(),
     phone: f.phone.value.trim(),
     stage: f.stage.value,
@@ -1257,6 +1323,11 @@ form.addEventListener('input', (e) => {
   if (t.name === 'position' && !form.elements.manager.value.trim()) {
     const same = candidates.find((c) => c.position === t.value.trim() && c.manager);
     if (same) form.elements.manager.value = same.manager;
+  }
+  // 部門也一樣，依同職缺自動帶入
+  if (t.name === 'position' && !form.elements.department.value.trim()) {
+    const same = candidates.find((c) => c.position === t.value.trim() && c.department);
+    if (same) form.elements.department.value = same.department;
   }
 });
 
@@ -1405,6 +1476,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
 $('#searchInput').addEventListener('input', render);
 $('#positionFilter').addEventListener('change', render);
 $('#managerFilter').addEventListener('change', render);
+$('#deptFilter').addEventListener('change', render);
 $('#addBtn').addEventListener('click', () => openModal());
 
 $('#maskBtn').addEventListener('click', () => {
@@ -1512,7 +1584,7 @@ async function withXlsx(fn) {
 
 // Excel 欄位（一列＝一位候選人的一輪面試；同一人有多輪就填多列，姓名與職缺相同即可）
 const XL_COLS = [
-  ['name', '姓名', 10], ['position', '應徵職缺', 12], ['manager', '面試主管', 10],
+  ['name', '姓名', 10], ['position', '應徵職缺', 12], ['department', '部門', 10], ['manager', '面試主管', 10],
   ['email', 'Email', 24], ['phone', '電話', 14], ['stage', '目前階段', 9], ['result', '結案結果', 10],
   ['round', '面試輪次', 9], ['at', '面試時間', 17], ['duration', '時長（分鐘）', 11],
   ['interviewer', '面試官', 10], ['location', '地點／方式', 14], ['ivRating', '這輪評分', 8],
@@ -1523,6 +1595,7 @@ const XL_ALIASES = {
   name: ['姓名', '名字', '候選人', '候選人姓名'],
   position: ['應徵職缺', '職缺', '職位', '應徵職位'],
   manager: ['面試主管', '主管', '用人主管'],
+  department: ['部門', '單位', '所屬部門', '用人部門'],
   email: ['email', 'e-mail', '電子郵件', '信箱'],
   phone: ['電話', '手機', '聯絡電話'],
   stage: ['目前階段', '階段', '進度'],
@@ -1561,7 +1634,7 @@ function candidatesToRows(list) {
   const rows = [];
   const sorted = [...list].sort((a, b) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage) || a.name.localeCompare(b.name, 'zh-Hant'));
   for (const c of sorted) {
-    const base = { name: c.name, position: c.position, manager: c.manager, email: c.email, phone: c.phone,
+    const base = { name: c.name, position: c.position, department: c.department, manager: c.manager, email: c.email, phone: c.phone,
       stage: c.stage, result: c.result, rating: c.rating || '', next: c.next, notes: c.notes };
     const ivs = [...c.interviews].sort((a, b) => (a.at || '9').localeCompare(b.at || '9'));
     if (!ivs.length) rows.push(base);
@@ -1653,11 +1726,11 @@ function rowsToCandidates(X, aoa) {
       if (!STAGES.includes(stage)) { warnings.push(`第 ${rowNo} 列：階段「${stage}」無法辨識，已設為「投遞」`); stage = '投遞'; }
       if (result && !RESULTS.includes(result)) { warnings.push(`第 ${rowNo} 列：結案結果「${result}」無法辨識，已略過`); result = ''; }
       if (result) stage = '結案';
-      g = { name, position, manager: txt('manager'), email: txt('email'), phone: txt('phone'), stage, result,
+      g = { name, position, department: txt('department'), manager: txt('manager'), email: txt('email'), phone: txt('phone'), stage, result,
         rating: parseInt(get('rating'), 10) || 0, next: txt('next'), notes: txt('notes'), interviews: [] };
       groups.set(key, g);
     } else {
-      for (const k of ['manager', 'email', 'phone', 'next', 'notes']) if (!g[k]) g[k] = txt(k);
+      for (const k of ['department', 'manager', 'email', 'phone', 'next', 'notes']) if (!g[k]) g[k] = txt(k);
     }
 
     const rawAt = get('at');
