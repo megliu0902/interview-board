@@ -71,7 +71,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 7;
+const DEMO_VERSION = 8;
 upgradeDemo();
 
 function upgradeDemo() {
@@ -273,7 +273,7 @@ function sampleData() {
     };
     // 部分履歷篩選中的人先排電話篩選
     if ((stage === '履歷篩選' && rnd() < 0.7) || (stage === '投遞' && rnd() < 0.3)) {
-      interviews.push({ round: '電話篩選', interviewer: pos.first, at: slot(pick([0, 1, 2, 3, 6])), duration: 30, location: '電話', rating: 0, feedback: '' });
+      interviews.push({ round: '電話篩選', interviewer: '人資專員', at: slot(pick([0, 1, 2, 3, 6])), duration: 30, location: '電話', rating: 0, feedback: '' });
     }
     if (seq.includes('一面')) addRound('一面', pos.first, 2);
     if (seq.includes('二面')) addRound('二面', pos.second, 3);
