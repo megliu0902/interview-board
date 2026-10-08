@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <!-- ?v= 是版本號：每次更新網站就改一次，瀏覽器才會抓新的檔案 -->
-  <link rel="stylesheet" href="style.css?v=20261008g">
+  <link rel="stylesheet" href="style.css?v=20261008i">
 </head>
 <body>
   <main class="wrap">
@@ -49,6 +49,17 @@
         <input type="file" id="importInput" accept=".json,application/json" hidden>
       </label>
       <button class="btn ghost" id="resetBtn" type="button">還原示範資料</button>
+    </div>
+
+    <!-- Excel 匯入／匯出 -->
+    <div class="bar excel-bar">
+      <span class="bar-label">Excel</span>
+      <button class="btn ghost" id="xlsxTemplateBtn" type="button" title="下載空白範本，照欄位填好後再匯入">下載 Excel 範本</button>
+      <label class="btn excel" title="從 Excel 檔（.xlsx）匯入候選人">
+        匯入 Excel
+        <input type="file" id="xlsxInput" accept=".xlsx,.xls,.csv" hidden>
+      </label>
+      <button class="btn excel" id="xlsxExportBtn" type="button" title="把目前所有資料匯出成 Excel 檔">匯出 Excel</button>
     </div>
 
     <!-- 統計 -->
@@ -158,9 +169,30 @@
     </form>
   </dialog>
 
+  <!-- Excel 匯入預覽 -->
+  <dialog id="importDialog">
+    <form id="importForm" method="dialog">
+      <p class="eyebrow">IMPORT FROM EXCEL</p>
+      <h2>匯入預覽</h2>
+      <div id="importSummary"></div>
+      <div class="table-wrap" id="importTable"></div>
+      <fieldset class="import-mode">
+        <legend>匯入方式</legend>
+        <label><input type="radio" name="mode" value="append" checked> 加到現有資料後面</label>
+        <label><input type="radio" name="mode" value="replace"> 取代全部現有資料</label>
+        <label class="skip-dup"><input type="checkbox" name="skipDup" checked> 略過已存在的人（Email、電話相同，或姓名＋職缺相同）</label>
+      </fieldset>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="importCancel">取消</button>
+        <button type="submit" class="btn" id="importConfirm">確認匯入</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="tip" id="tip" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="app.js?v=20261008g"></script>
+  <script src="app.js?v=20261008i"></script>
 </body>
 </html>
