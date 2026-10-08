@@ -474,3 +474,21 @@ dialog { border-radius: 18px; border: none; box-shadow: 0 20px 60px rgba(0, 40, 
 .org-footer { color: var(--primary); font-weight: 700; }
 .toast { background: var(--primary); color: #fff; }
 .tip { background: #0b3d7a; color: #fff; }
+
+/* 公司 logo：放在白色圓角底板上，藍色標題區才看得清楚 */
+.top .brand-logo {
+  flex: none;
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 16px;
+  box-shadow: 0 4px 14px rgba(0, 40, 100, .18);
+}
+.top .brand-logo img {
+  display: block;
+  width: auto; height: 52px;
+  padding: 0; background: none; border-radius: 0;
+}
+@media (max-width: 700px) {
+  .top { flex-direction: column; align-items: flex-start; }
+  .top .brand-logo img { height: 40px; }
+}
