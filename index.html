@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <!-- ?v= 是版本號：每次更新網站就改一次，瀏覽器才會抓新的檔案 -->
-  <link rel="stylesheet" href="style.css?v=20261008o">
+  <link rel="stylesheet" href="style.css?v=20261008p">
 </head>
 <body>
   <main class="wrap">
@@ -69,10 +69,35 @@
       <button class="tab" data-view="calendar" role="tab">月曆</button>
       <button class="tab" data-view="rooms" role="tab">會議室</button>
       <button class="tab" data-view="analysis" role="tab">分析</button>
+      <span class="tabs-tools">
+        <button class="btn ghost small" id="batchToggle" type="button" title="一次選取多位候選人，批次改階段、結案或匯出">☑ 批次選取</button>
+        <button class="btn small" id="reportBtn" type="button" title="產生本週招募週報，可列印或匯出 Excel">📄 產生週報</button>
+      </span>
     </nav>
 
     <!-- 看板檢視 -->
     <section id="boardView" class="board"></section>
+
+    <!-- 批次操作列（批次選取模式才會出現） -->
+    <div class="batch-actions" id="batchActions" hidden>
+      <b id="batchCount">已選 0 位</b>
+      <span class="batch-group">移到
+        <select id="batchStage" aria-label="批次移到階段"></select>
+        <button class="btn small" type="button" data-batch="stage">套用</button>
+      </span>
+      <span class="batch-group">結案為
+        <select id="batchResult" aria-label="批次結案結果">
+          <option>錄取</option><option selected>未錄取</option><option>候選人婉拒</option>
+        </select>
+        <button class="btn small" type="button" data-batch="close">套用</button>
+      </span>
+      <button class="btn excel small" type="button" data-batch="excel">匯出 Excel</button>
+      <button class="btn danger small" type="button" data-batch="delete">刪除</button>
+      <span class="spacer"></span>
+      <button class="link-btn" type="button" data-batch="all">全選畫面上的人</button>
+      <button class="link-btn" type="button" data-batch="none">取消選取</button>
+      <button class="btn ghost small" type="button" data-batch="exit">完成</button>
+    </div>
 
     <!-- 月曆檢視 -->
     <section id="calendarView" class="calendar" hidden>
@@ -181,11 +206,27 @@
 
       <div class="modal-actions">
         <button type="button" class="btn danger" id="deleteBtn">刪除</button>
+        <button type="button" class="btn ghost" id="compareBtn" title="看同職缺其他候選人的評分細項">📊 和同職缺比較</button>
         <span class="spacer"></span>
         <button type="button" class="btn ghost" id="cancelBtn">取消</button>
         <button type="submit" class="btn">儲存</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- 招募週報 -->
+  <dialog id="reportDialog">
+    <div class="report-toolbar">
+      <span class="range-bar" role="group" aria-label="週報期間">
+        <button type="button" data-week="-1">上週</button>
+        <button type="button" data-week="0" class="on">本週</button>
+      </span>
+      <span class="spacer"></span>
+      <button class="btn ghost small" type="button" id="reportPrint">🖨 列印／存成 PDF</button>
+      <button class="btn excel small" type="button" id="reportExcel">匯出 Excel</button>
+      <button class="btn ghost small" type="button" id="reportClose">關閉</button>
+    </div>
+    <article id="reportBody" class="report"></article>
   </dialog>
 
   <!-- 會議室管理 -->
@@ -231,6 +272,6 @@
   <div class="tip" id="tip" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="app.js?v=20261008o"></script>
+  <script src="app.js?v=20261008p"></script>
 </body>
 </html>
