@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <!-- ?v= 是版本號：每次更新網站就改一次，瀏覽器才會抓新的檔案 -->
-  <link rel="stylesheet" href="style.css?v=20261008p">
+  <link rel="stylesheet" href="style.css?v=20261008q">
 </head>
 <body>
   <main class="wrap">
@@ -58,6 +58,7 @@
         <input type="file" id="xlsxInput" accept=".xlsx,.xls,.csv" hidden>
       </label>
       <button class="btn excel" id="xlsxExportBtn" type="button" title="把目前所有資料匯出成 Excel 檔">匯出 Excel</button>
+      <button class="btn excel" id="deptExportBtn" type="button" title="每個部門各產生一個 Excel，分別寄給各部門主管">依部門匯出</button>
     </div>
 
     <!-- 統計 -->
@@ -229,6 +230,22 @@
     <article id="reportBody" class="report"></article>
   </dialog>
 
+  <!-- 依部門匯出 -->
+  <dialog id="deptDialog">
+    <div class="dept-export">
+      <p class="eyebrow">EXPORT BY DEPARTMENT</p>
+      <h2>依部門匯出</h2>
+      <p class="hint">每個部門各產生一個 Excel（摘要、候選人名單、本週面試、下週排程、需要關注），只包含該部門的候選人，分別寄給各部門主管即可。</p>
+      <div class="table-wrap"><table class="data-table" id="deptExportTable"></table></div>
+      <p class="warn dup">檔案含候選人個資：請只寄給該部門主管，並提醒對方不要轉寄或上傳到公開網站。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn excel" id="deptZipBtn">全部打包下載（ZIP）</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="deptClose">關閉</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- 會議室管理 -->
   <dialog id="roomDialog">
     <form id="roomForm" method="dialog">
@@ -272,6 +289,6 @@
   <div class="tip" id="tip" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="app.js?v=20261008p"></script>
+  <script src="app.js?v=20261008q"></script>
 </body>
 </html>
