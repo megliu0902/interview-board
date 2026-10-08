@@ -378,6 +378,7 @@ let calMonth = new Date(); calMonth.setDate(1);
 let editingId = null;
 let currentRating = 0;
 let showTables = false;   // 分析頁：以表格檢視
+let analysisRange = 'all'; // 分析頁：分析期間（all／30／90／year）
 
 function filtered() {
   const q = $('#searchInput').value.trim().toLowerCase();
@@ -608,11 +609,23 @@ function tableHtml(head, rows) {
 function renderAnalysis() {
   const pos = $('#positionFilter').value;
   const mgr = $('#managerFilter').value;
-  const list = candidates.filter((c) => (!pos || c.position === pos) && (!mgr || c.manager === mgr));
-  const scope = [pos ? `「${esc(pos)}」職缺` : '全部職缺', mgr ? `面試主管「${esc(mgr)}」` : ''].filter(Boolean).join('、');
+  const baseList = candidates.filter((c) => (!pos || c.position === pos) && (!mgr || c.manager === mgr));
+  // 分析期間：依「投遞日期」篩選
+  const RANGES = { all: '全部期間', 30: '近 30 天', 90: '近 90 天', year: `${new Date().getFullYear()} 年` };
+  const inRange = (c) => {
+    const t = new Date(c.createdAt).getTime();
+    if (analysisRange === '30') return t >= Date.now() - 30 * DAY;
+    if (analysisRange === '90') return t >= Date.now() - 90 * DAY;
+    if (analysisRange === 'year') return new Date(t).getFullYear() === new Date().getFullYear();
+    return true;
+  };
+  const list = baseList.filter(inRange);
+  const scope = [pos ? `「${esc(pos)}」職缺` : '全部職缺', mgr ? `面試主管「${esc(mgr)}」` : '', RANGES[analysisRange]].filter(Boolean).join('、');
+  const rangeBar = `<div class="range-bar" role="group" aria-label="分析期間">分析期間
+    ${Object.entries(RANGES).map(([k, v]) => `<button type="button" data-range="${k}" class="${analysisRange === k ? 'on' : ''}">${v}</button>`).join('')}</div>`;
 
   if (!list.length) {
-    $('#analysisView').innerHTML = `<p class="note-line">${scope}目前沒有資料可以分析。</p>`;
+    $('#analysisView').innerHTML = `${rangeBar}<p class="note-line">${scope}目前沒有資料可以分析。</p>`;
     return;
   }
 
@@ -754,21 +767,138 @@ function renderAnalysis() {
     const upcoming = mine.filter(({ iv }) => ivStart(iv) >= now && ivStart(iv) <= now + 14 * DAY).length;
     const scores = mine.map(({ iv }) => iv.rating).filter(Boolean);
     const myAvg = avg(scores);
+    // 給分傾向：和全體平均相比
+    const overall = avg(ratedRounds.map((iv) => iv.rating));
+    const lean = myAvg === null || overall === null || scores.length < 2 ? '—'
+      : myAvg - overall >= 0.4 ? '<span class="pill p-good">偏寬鬆</span>'
+      : myAvg - overall <= -0.4 ? '<span class="pill p-bad">偏嚴格</span>' : '<span class="pill p-past">適中</span>';
     return { upcoming, cells: [esc(name), mine.filter(({ iv }) => ivEnd(iv) <= now).length, upcoming,
       list.filter((c) => c.manager === name && c.stage !== '結案').length,
-      myAvg !== null ? myAvg.toFixed(1) : '—'] };
+      myAvg !== null ? myAvg.toFixed(1) : '—', lean] };
   }).sort((a, b) => b.upcoming - a.upcoming || b.cells[1] - a.cells[1]);
 
+  // ---- 今日焦點（不受分析期間影響，看的是「現在」要處理的事）----
+  const todayKey = dateKey(new Date());
+  const todayIv = baseList.flatMap((c) => c.interviews.filter((iv) => iv.at && iv.at.startsWith(todayKey)).map((iv) => ({ c, iv })))
+    .sort((a, b) => byTime(a.iv, b.iv));
+  const stuckList = baseList.filter(isStuck).sort((a, b) => daysSince(b.stageSince) - daysSince(a.stageSince));
+  const offerList = baseList.filter((c) => c.stage === 'Offer').sort((a, b) => daysSince(b.stageSince) - daysSince(a.stageSince));
+  const newList = baseList.filter((c) => c.stage === '投遞').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const focusCard = (title, icon, items, empty, line) => `
+    <div class="focus-card">
+      <div class="focus-head"><span class="focus-icon" aria-hidden="true">${icon}</span>${title}<b>${items.length}</b></div>
+      ${items.length ? `<ul>${items.slice(0, 5).map(line).join('')}</ul>${items.length > 5 ? `<p class="focus-more">還有 ${items.length - 5} 位…</p>` : ''}` : `<p class="focus-empty">${empty}</p>`}
+    </div>`;
+  const who = (c) => `<button type="button" class="focus-link" data-open="${c.id}">${esc(dn(c))}</button>`;
+  const focusHtml = `<div class="focus-grid">
+    ${focusCard('今天的面試', '📅', todayIv, '今天沒有面試', ({ c, iv }) =>
+      `<li><span class="focus-time">${iv.at.slice(11)}</span>${who(c)}・${esc(iv.round)}<small>${esc(iv.interviewer || '')}${iv.location ? '・' + esc(iv.location) : ''}</small></li>`)}
+    ${focusCard('卡關待處理', '⏳', stuckList, `沒有卡關超過 ${STUCK_DAYS} 天的人 👍`, (c) =>
+      `<li>${who(c)}<small>${esc(c.stage)}・已 ${daysSince(c.stageSince)} 天${c.next ? '・' + esc(c.next) : ''}</small></li>`)}
+    ${focusCard('Offer 待回覆', '⭐', offerList, '目前沒有待回覆的 Offer', (c) =>
+      `<li>${who(c)}<small>${esc(c.position)}・發出 ${daysSince(c.stageSince)} 天${c.next ? '・' + esc(c.next) : ''}</small></li>`)}
+    ${focusCard('新履歷待篩選', '📨', newList, '沒有待篩選的新履歷', (c) =>
+      `<li>${who(c)}<small>${esc(c.position)}・投遞 ${daysSince(c.createdAt)} 天</small></li>`)}
+  </div>`;
+
+  // ---- 更多成效指標 ----
+  const reached1 = list.filter((c) => reachedIndex(c) >= 2);
+  const decided1 = reached1.filter((c) => reachedIndex(c) >= 3 || c.stage === '結案');
+  const passed1 = decided1.filter((c) => reachedIndex(c) >= 3).length;
+  const kpiOf = (label) => kpis.find((k) => k[0] === label);
+  const kpiGroups = [
+    ['效率', '流程跑得快不快', [kpiOf('平均招募天數'), kpiOf('首次回覆天數'), kpiOf('停留最久的階段'), kpiOf('卡關比例')]],
+    ['成效', '找到對的人了嗎', [kpiOf('錄取率'), kpiOf('Offer 接受率'),
+      ['一面通過率', pct(passed1, decided1.length), `一面有結果的 ${decided1.length} 位中，${passed1} 位進入二面`],
+      ['每錄取 1 人需要', hired.length ? `${Math.round(list.length / hired.length)} 份履歷` : '—', `共 ${list.length} 份履歷、錄取 ${hired.length} 位`]]],
+    ['產能', '團隊的工作量', [kpiOf('本月新增投遞'), kpiOf('未來 7 天面試'), kpiOf('錄取者平均面試'), kpiOf('面試平均評分')]]
+  ];
+
+  // ---- 熱度表：職缺 × 階段 ----
+  const heatCols = [...STAGES.slice(0, 5), '錄取', '未成功'];
+  const heatRows = positionRows.map((r) => r.p);
+  const heatMatrix = heatRows.map((p) => {
+    const ps = list.filter((c) => c.position === p);
+    return heatCols.map((col) => col === '錄取' ? ps.filter((c) => c.result === '錄取').length
+      : col === '未成功' ? ps.filter((c) => c.result === '未錄取' || c.result === '候選人婉拒').length
+      : ps.filter((c) => c.stage === col).length);
+  });
+
+  // ---- 熱度表：面試時段（週一～週五 × 每小時）----
+  const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+  const DOW = ['週一', '週二', '週三', '週四', '週五'];
+  const slotMatrix = DOW.map((_, di) => HOURS.map((h) => allIv.filter(({ iv }) => {
+    const d = new Date(iv.at);
+    return (d.getDay() + 6) % 7 === di && d.getHours() === h;
+  }).length));
+  const busiest = (() => {
+    let best = null;
+    slotMatrix.forEach((row, di) => row.forEach((n, hi) => { if (!best || n > best.n) best = { n, label: `${DOW[di]} ${HOURS[hi]}:00` }; }));
+    return best;
+  })();
+
+  // ---- 每月結案趨勢（近 6 個月）----
+  const months = [];
+  for (let m = -5; m <= 0; m++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + m);
+    const key = dateKey(d).slice(0, 7);
+    const closedIn = list.filter((c) => {
+      const e = [...c.history].reverse().find((h) => h.stage === '結案');
+      return e && dateKey(new Date(e.at)).startsWith(key);
+    });
+    months.push({ label: m === 0 ? '本月' : `${d.getMonth() + 1} 月`, now: m === 0,
+      done: closedIn.filter((c) => c.result === '錄取').length,
+      sched: closedIn.filter((c) => c.result !== '錄取').length });
+  }
+
+  // ---- 進行中候選人已等多久（從投遞算起）----
+  const AGE = [['7 天內', 0, 7], ['8～14 天', 8, 14], ['15～30 天', 15, 30], ['30 天以上', 31, Infinity]];
+  const ageRows = AGE.map(([label, lo, hi]) => {
+    const g = active.filter((c) => { const d = daysSince(c.createdAt); return d >= lo && d <= hi; });
+    const byStage = STAGES.slice(0, 5).map((s) => `${s} ${g.filter((c) => c.stage === s).length}`).join('・');
+    return { label, value: g.length, hi: lo >= 31 && g.length > 0, valueHtml: `<b>${g.length}</b>人`, tip: `${label}：${g.length} 人\n${byStage}` };
+  });
+  const ageMax = Math.max(1, ...ageRows.map((r) => r.value));
+
+  // ---- 面試主管比較 ----
+  const managers = [...new Set(list.map((c) => c.manager).filter(Boolean))];
+  const mgrRows = managers.map((m) => {
+    const ms = list.filter((c) => c.manager === m);
+    const mHired = ms.filter((c) => c.result === '錄取');
+    const mClosed = ms.filter((c) => c.stage === '結案');
+    const mDays = avg(mHired.map((c) => { const e = [...c.history].reverse().find((h) => h.stage === '結案'); return e ? (new Date(e.at) - new Date(c.createdAt)) / DAY : null; }).filter((x) => x !== null));
+    const mStuck = ms.filter(isStuck).length;
+    return { n: ms.length, cells: [esc(m), esc([...new Set(ms.map((c) => c.position))].join('、')), ms.length,
+      ms.filter((c) => c.stage !== '結案').length, mStuck ? `<span class="pill p-stuck">${mStuck}</span>` : '0',
+      mHired.length, pct(mHired.length, mClosed.length), mDays !== null ? `${Math.round(mDays)} 天` : '—'] };
+  }).sort((a, b) => b.n - a.n);
+
   $('#analysisView').innerHTML = `
+    <nav class="dash-nav" aria-label="儀表板段落">
+      <a href="#a-focus">今日焦點</a><a href="#a-kpi">關鍵指標</a><a href="#a-funnel">漏斗與流程</a>
+      <a href="#a-trend">趨勢</a><a href="#a-heat">熱度圖</a><a href="#a-team">職缺與團隊</a>
+    </nav>
+    ${rangeBar}
     <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」或「面試主管」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
 
-    <div class="kpis">${kpis.map(([label, value, sub]) => `
-      <div class="kpi"><div class="k-label">${label}</div><div class="k-value">${value}</div><div class="k-sub">${sub}</div></div>`).join('')}
-    </div>
+    <section id="a-focus">
+      <h3>今日焦點</h3>
+      <p class="desc">現在最需要處理的事；點姓名可直接打開資料。</p>
+      ${focusHtml}
+    </section>
+
+    <section id="a-kpi">
+      <h3>關鍵指標</h3>
+      ${kpiGroups.map(([g, sub, items]) => `
+        <div class="kpi-group"><p class="kpi-group-title">${g}<small>${sub}</small></p>
+        <div class="kpis">${items.map(([label, value, s]) => `
+          <div class="kpi"><div class="k-label">${label}</div><div class="k-value">${value}</div><div class="k-sub">${s}</div></div>`).join('')}
+        </div></div>`).join('')}
+    </section>
 
     <button type="button" class="link-btn table-toggle" id="tableToggle">${showTables ? '改用圖表檢視' : '改用表格檢視'}</button>
 
-    <section>
+    <section id="a-funnel">
       <h3>招募漏斗</h3>
       <p class="desc">每個階段有多少人「曾經走到」這裡。滑鼠移到長條上可看詳細比例。</p>
       ${showTables
@@ -785,6 +915,14 @@ function renderAnalysis() {
     </section>
 
     <section>
+      <h3>進行中候選人已等多久</h3>
+      <p class="desc">從投遞到今天的天數；等太久的人容易被其他公司搶走，30 天以上以橘色標示。</p>
+      ${showTables
+        ? tableHtml(['已等待', '人數', '各階段'], ageRows.map((r) => [r.label, r.value, r.tip.split('\n')[1]]))
+        : barsHtml(ageRows, ageMax)}
+    </section>
+
+    <section id="a-trend">
       <h3>每週面試量</h3>
       <p class="desc">過去 7 週到未來 2 週，每週有幾場面試；可以看出面試官哪幾週比較忙。</p>
       ${showTables
@@ -812,6 +950,26 @@ function renderAnalysis() {
     </div>
 
     <section>
+      <h3>每月結案趨勢</h3>
+      <p class="desc">近 6 個月每月結案的人數，藍色是錄取、灰色是未錄取或婉拒。</p>
+      ${showTables
+        ? tableHtml(['月份', '錄取', '未成功', '合計'], months.map((m) => [m.label, m.done, m.sched, m.done + m.sched]))
+        : vbarsHtml(months, [['錄取', ''], ['未錄取／婉拒', 'muted']], '人')}
+    </section>
+
+    <section id="a-heat">
+      <h3>職缺 × 階段熱度表</h3>
+      <p class="desc">每個職缺目前各階段有幾個人，顏色越深人越多；一眼看出哪個職缺卡在哪裡。</p>
+      ${heatHtml(heatRows, heatCols, heatMatrix, '人', (r, c, n) => `${r}・${c}：${n} 人`)}
+    </section>
+
+    <section>
+      <h3>面試時段熱度圖</h3>
+      <p class="desc">所有面試排在星期幾、幾點（含已排定）${busiest && busiest.n ? `；最常排在 <b>${busiest.label}</b>` : ''}。安排新面試時可以避開最擠的時段。</p>
+      ${heatHtml(DOW, HOURS.map((h) => `${h}:00`), slotMatrix, '場', (r, c, n) => `${r} ${c}：${n} 場面試`)}
+    </section>
+
+    <section>
       <h3>未錄取／婉拒在哪一關結束</h3>
       <p class="desc">${lost.length ? `共 ${lost.length} 位沒有成功錄取，最多人在「${lostTop.stage}」結束（以橘色標示），這一關值得檢討。` : '目前還沒有未錄取或婉拒的紀錄。'}</p>
       ${showTables
@@ -820,17 +978,36 @@ function renderAnalysis() {
             valueHtml: `<b>${x.n}</b>人`, tip: `在「${x.stage}」結束：${x.n} 人\n公司未錄取 ${x.rej}・候選人婉拒 ${x.dec}` })), lostMax)}
     </section>
 
-    <section>
+    <section id="a-team">
       <h3>各職缺招募狀況</h3>
       <p class="desc">每個職缺的進度與成效，依投遞人數排序。</p>
       ${tableHtml(['職缺', '面試主管', '投遞', '進行中', '進入面試', '到 Offer', '錄取', '錄取率', '平均招募天數'], positionRows.map((r) => r.cells))}
     </section>
 
     <section>
-      <h3>面試官負荷</h3>
-      <p class="desc">每位面試官已面試與接下來 14 天的場次，以及平均給分；避免工作集中在少數人身上。</p>
-      ${tableHtml(['面試官', '已面試', '未來 14 天', '負責中候選人', '平均給分'], loadRows.map((r) => r.cells))}
+      <h3>面試主管比較</h3>
+      <p class="desc">每位面試主管負責的職缺、人數與成效；卡關人數多的主管可以優先提醒。</p>
+      ${tableHtml(['面試主管', '負責職缺', '候選人', '進行中', '卡關', '錄取', '錄取率', '平均招募天數'], mgrRows.map((r) => r.cells))}
+    </section>
+
+    <section>
+      <h3>面試官負荷與給分傾向</h3>
+      <p class="desc">每位面試官已面試與接下來 14 天的場次；平均給分比全體高或低 0.4 分以上，會標示偏寬鬆或偏嚴格，方便校準評分標準。</p>
+      ${tableHtml(['面試官', '已面試', '未來 14 天', '負責中候選人', '平均給分', '給分傾向'], loadRows.map((r) => r.cells))}
     </section>`;
+}
+
+// 熱度表：顏色深淺代表數量（單一藍色，由淺到深），格子裡也寫數字
+function heatHtml(rows, cols, matrix, unit, tipFn) {
+  const max = Math.max(1, ...matrix.flat());
+  return `<div class="table-wrap"><table class="heat">
+    <thead><tr><th></th>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r, ri) => `<tr><th>${esc(r)}</th>${matrix[ri].map((n, ci) => {
+      const t = n / max;
+      const style = n ? `background: rgba(0, 106, 224, ${(0.1 + t * 0.8).toFixed(2)}); color: ${t > 0.5 ? '#fff' : 'var(--fg)'}` : '';
+      return `<td style="${style}" data-tip="${esc(tipFn(r, cols[ci], n))}">${n || ''}</td>`;
+    }).join('')}</tr>`).join('')}</tbody>
+  </table></div>`;
 }
 
 // 直條圖（每週趨勢用）；series 為 null 表示單一數列
@@ -872,6 +1049,10 @@ document.addEventListener('focusout', () => { tip.hidden = true; });
 
 $('#analysisView').addEventListener('click', (e) => {
   if (e.target.id === 'tableToggle') { showTables = !showTables; renderAnalysis(); }
+  const range = e.target.closest('[data-range]');
+  if (range) { analysisRange = range.dataset.range; renderAnalysis(); }
+  const open = e.target.closest('[data-open]');
+  if (open) openModal(open.dataset.open);
 });
 
 // ---------- 行事曆檔 (.ics) ----------
