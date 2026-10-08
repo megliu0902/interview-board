@@ -71,7 +71,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 3;
+const DEMO_VERSION = 4;
 upgradeDemo();
 
 function upgradeDemo() {
