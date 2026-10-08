@@ -548,3 +548,8 @@ body {
 .top .hero-art { background: none; padding: 0; border-radius: 0; height: auto; }
 .col-head h3 { font-size: 19px; white-space: nowrap; }
 .col-head small { white-space: nowrap; }
+
+/* 面試主管 */
+.card .mgr { color: var(--fg); }
+.card .mgr b { color: var(--primary); }
+#managerFilter { max-width: 220px; }
