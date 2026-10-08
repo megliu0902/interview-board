@@ -71,7 +71,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 2;
+const DEMO_VERSION = 3;
 upgradeDemo();
 
 function upgradeDemo() {
@@ -79,7 +79,8 @@ function upgradeDemo() {
   const OLD_DEMO = new Set(['王小明', '陳怡君', '林志豪', '黃雅婷', '周文傑', '吳建宏', '蔡佩珊',
     '劉家瑜', '鄭家豪', '許庭瑋', '何思穎', '蘇冠廷', '江雨晴', '楊子豪']);
   const onlyOldDemo = candidates.length > 0 &&
-    candidates.every((c) => OLD_DEMO.has(c.name) && (!c.email || c.email === 'ming@example.com'));
+    candidates.every((c) => (OLD_DEMO.has(c.name) && (!c.email || c.email === 'ming@example.com')) ||
+      /^candidate\d+@example\.com$/.test(c.email));   // 上一版示範資料的虛構 Email
   if (onlyOldDemo) {
     candidates = sampleData();
     save();
@@ -138,6 +139,7 @@ function migrate(list) {
         id: str(c.id, 40) || newId(),
         name: str(c.name, 40),
         position: str(c.position, 40),
+        manager: str(c.manager, 40),
         email: str(c.email, 100),
         phone: str(c.phone, 30),
         stage,
@@ -280,6 +282,7 @@ function sampleData() {
     return {
       name: NAMES[i],
       position: pos.name,
+      manager: pos.first,   // 面試主管＝該職缺的一面面試官
       email: `candidate${pad(i + 1)}@example.com`,
       phone: `09${int(10, 89)}-${int(100, 999)}-${int(100, 999)}`,
       stage, result: result || '',
@@ -296,7 +299,7 @@ function sampleData() {
   // 重複投遞的例子：之前未錄取的人，這次改投別的職缺
   const before = list.find((c) => c.result === '未錄取');
   list.push({
-    name: before.name, position: '客服專員', email: before.email, phone: before.phone,
+    name: before.name, position: '客服專員', manager: '客服主管', email: before.email, phone: before.phone,
     stage: '投遞', next: '確認上次未錄取原因', notes: '曾應徵過其他職缺',
     history: [{ stage: '投遞', at: ago(0.5) }], createdAt: ago(0.5), stageSince: ago(0.5), interviews: []
   });
@@ -379,10 +382,12 @@ let showTables = false;   // 分析頁：以表格檢視
 function filtered() {
   const q = $('#searchInput').value.trim().toLowerCase();
   const pos = $('#positionFilter').value;
+  const mgr = $('#managerFilter').value;
   return candidates.filter((c) => {
     if (pos && c.position !== pos) return false;
+    if (mgr && c.manager !== mgr) return false;
     if (!q) return true;
-    const fields = [c.name, c.position, c.notes, c.next, c.email,
+    const fields = [c.name, c.position, c.manager, c.notes, c.next, c.email,
       ...c.interviews.flatMap((iv) => [iv.interviewer, iv.location, iv.feedback, iv.round])];
     return fields.some((v) => (v || '').toLowerCase().includes(q));
   });
@@ -455,6 +460,15 @@ function renderPositionOptions() {
     positions.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
   sel.value = positions.includes(keep) ? keep : '';
   $('#positionList').innerHTML = positions.map((p) => `<option value="${esc(p)}">`).join('');
+
+  // 面試主管下拉選單與輸入提示
+  const managers = [...new Set(candidates.map((c) => c.manager).filter(Boolean))].sort();
+  const msel = $('#managerFilter');
+  const mkeep = msel.value;
+  msel.innerHTML = '<option value="">全部面試主管</option>' +
+    managers.map((m) => `<option value="${esc(m)}">${esc(m)}（${candidates.filter((c) => c.manager === m && c.stage !== '結案').length} 位進行中）</option>`).join('');
+  msel.value = managers.includes(mkeep) ? mkeep : '';
+  $('#managerList').innerHTML = managers.map((m) => `<option value="${esc(m)}">`).join('');
 }
 
 function cardHtml(c) {
@@ -476,6 +490,7 @@ function cardHtml(c) {
 
   const done = c.interviews.filter((r) => r.at && ivEnd(r) < Date.now()).length;
   const metaLines = [];
+  if (c.manager) metaLines.push(`<span class="mgr">面試主管：<b>${esc(c.manager)}</b></span>`);
   if (iv) metaLines.push(`<span class="when">${esc(iv.round)}・${formatTime(iv.at)}</span>`);
   if (iv && (iv.interviewer || iv.location)) metaLines.push(`<span>面試官：${esc(iv.interviewer || '—')}${iv.location ? '・' + esc(iv.location) : ''}</span>`);
   if (c.interviews.length > 1) metaLines.push(`<span>共 ${c.interviews.length} 輪面試，已完成 ${done} 輪</span>`);
@@ -592,8 +607,9 @@ function tableHtml(head, rows) {
 
 function renderAnalysis() {
   const pos = $('#positionFilter').value;
-  const list = candidates.filter((c) => !pos || c.position === pos);
-  const scope = pos ? `「${esc(pos)}」職缺` : '全部職缺';
+  const mgr = $('#managerFilter').value;
+  const list = candidates.filter((c) => (!pos || c.position === pos) && (!mgr || c.manager === mgr));
+  const scope = [pos ? `「${esc(pos)}」職缺` : '全部職缺', mgr ? `面試主管「${esc(mgr)}」` : ''].filter(Boolean).join('、');
 
   if (!list.length) {
     $('#analysisView').innerHTML = `<p class="note-line">${scope}目前沒有資料可以分析。</p>`;
@@ -648,7 +664,7 @@ function renderAnalysis() {
   const migratedOnly = list.filter((c) => c.history.length === 1 && c.stage === '結案').length;
 
   $('#analysisView').innerHTML = `
-    <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
+    <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」或「面試主管」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
 
     <div class="kpis">${kpis.map(([label, value, sub]) => `
       <div class="kpi"><div class="k-label">${label}</div><div class="k-value">${value}</div><div class="k-sub">${sub}</div></div>`).join('')}
@@ -712,6 +728,7 @@ function downloadIcs(c, iv) {
   const desc = [
     `候選人：${c.name}`,
     `應徵職缺：${c.position}`,
+    c.manager && `面試主管：${c.manager}`,
     `面試輪次：${iv.round}`,
     iv.interviewer && `面試官：${iv.interviewer}`,
     c.email && `Email：${c.email}`,
@@ -752,7 +769,9 @@ function renderStars() {
 function newRound(existing, at = '') {
   const used = existing.map((r) => r.round);
   const round = ['一面', '二面', '三面', '主管面談'].find((r) => !used.includes(r)) || '其他';
-  return { id: newId(), round, at, duration: 60, interviewer: '', location: '', rating: 0, feedback: '' };
+  // 面試官預設帶入面試主管，可以再改
+  const interviewer = form.elements.manager.value.trim();
+  return { id: newId(), round, at, duration: 60, interviewer, location: '', rating: 0, feedback: '' };
 }
 
 function roundHtml(r) {
@@ -847,7 +866,7 @@ function openModal(id, presetDate) {
 
   let rounds = [];
   if (c) {
-    for (const key of ['name', 'position', 'email', 'phone', 'stage', 'result', 'next', 'notes']) {
+    for (const key of ['name', 'position', 'manager', 'email', 'phone', 'stage', 'result', 'next', 'notes']) {
       form.elements[key].value = c[key] ?? '';
     }
     currentRating = c.rating || 0;
@@ -872,6 +891,7 @@ function readForm() {
     id: editingId || newId(),
     name: f.name.value.trim(),
     position: f.position.value.trim(),
+    manager: f.manager.value.trim(),
     email: f.email.value.trim(),
     phone: f.phone.value.trim(),
     stage: f.stage.value,
@@ -890,6 +910,11 @@ form.addEventListener('input', (e) => {
   if (['name', 'email', 'phone'].includes(t.name)) checkDuplicates();
   // 選了結案結果，就自動把階段移到「結案」
   if (t.name === 'result' && t.value) form.elements.stage.value = '結案';
+  // 填了職缺、還沒填面試主管 → 自動帶入同職缺其他人登記的主管
+  if (t.name === 'position' && !form.elements.manager.value.trim()) {
+    const same = candidates.find((c) => c.position === t.value.trim() && c.manager);
+    if (same) form.elements.manager.value = same.manager;
+  }
 });
 
 $('#addRound').addEventListener('click', () => {
@@ -1036,6 +1061,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
 });
 $('#searchInput').addEventListener('input', render);
 $('#positionFilter').addEventListener('change', render);
+$('#managerFilter').addEventListener('change', render);
 $('#addBtn').addEventListener('click', () => openModal());
 
 $('#maskBtn').addEventListener('click', () => {
