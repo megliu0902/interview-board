@@ -245,7 +245,7 @@ function sampleData() {
 
     // 結案前最後走到哪一關
     let lastIdx = STAGES.indexOf(stage);
-    if (closed) lastIdx = result === '錄取' ? 4 : result === '候選人婉拒' ? pick([3, 4]) : pick([1, 2, 2, 3]);
+    if (closed) lastIdx = result === '錄取' ? 4 : result === '候選人婉拒' ? 4 : pick([1, 2, 2, 3]);
     const seq = STAGES.slice(0, lastIdx + 1);
     if (closed) seq.push('結案');
 
@@ -663,6 +663,102 @@ function renderAnalysis() {
 
   const migratedOnly = list.filter((c) => c.history.length === 1 && c.stage === '結案').length;
 
+  // ---- 進階指標 ----
+  const now = Date.now();
+  const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+  const allIv = list.flatMap((c) => c.interviews.filter((iv) => iv.at).map((iv) => ({ c, iv })));
+
+  // Offer 接受率：走到 Offer 且已有結果的人之中，接受（錄取）的比例
+  const offerDecided = list.filter((c) => reachedIndex(c) >= 4 && (c.result === '錄取' || c.result === '候選人婉拒'));
+  const offerAccepted = offerDecided.filter((c) => c.result === '錄取').length;
+  // 首次回覆天數：投遞 → 進入履歷篩選
+  const firstReply = list.map((c) => {
+    const h = c.history.find((x) => x.stage === '履歷篩選');
+    return h ? (new Date(h.at) - new Date(c.createdAt)) / DAY : null;
+  }).filter((d) => d !== null && d >= 0);
+  const avgReply = avg(firstReply);
+  // 本月新增投遞、未來 7 天面試
+  const monthKey = dateKey(new Date()).slice(0, 7);
+  const newThisMonth = list.filter((c) => c.createdAt && dateKey(new Date(c.createdAt)).startsWith(monthKey)).length;
+  const next7 = allIv.filter(({ iv }) => ivStart(iv) >= now && ivStart(iv) <= now + 7 * DAY).length;
+  // 錄取者平均面試輪數、卡關比例
+  const hiredRounds = avg(hired.map((c) => c.interviews.length));
+  const active = list.filter((c) => c.stage !== '結案');
+  const stuckN = active.filter(isStuck).length;
+
+  kpis.push(
+    ['Offer 接受率', pct(offerAccepted, offerDecided.length), `發出 Offer 後 ${offerDecided.length} 位有結果，${offerAccepted} 位接受`],
+    ['首次回覆天數', avgReply !== null ? `${avgReply.toFixed(1)} 天` : '—', '投遞到開始篩選履歷的平均天數'],
+    ['本月新增投遞', `${newThisMonth} 位`, `${new Date().getMonth() + 1} 月收到的履歷`],
+    ['未來 7 天面試', `${next7} 場`, '已排定的面試場次'],
+    ['錄取者平均面試', hiredRounds !== null ? `${hiredRounds.toFixed(1)} 輪` : '—', '錄取一個人平均要面幾輪'],
+    ['卡關比例', pct(stuckN, active.length), `進行中 ${active.length} 位，${stuckN} 位卡關 ${STUCK_DAYS} 天以上`]
+  );
+
+  // 每週面試量（過去 7 週＋本週＋未來 2 週）
+  const weekStart = (t) => { const d = new Date(t); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const thisWeek = weekStart(now);
+  const weeks = [];
+  for (let w = -7; w <= 2; w++) {
+    const s = thisWeek + w * 7 * DAY;
+    const inWeek = allIv.filter(({ iv }) => ivStart(iv) >= s && ivStart(iv) < s + 7 * DAY);
+    const d = new Date(s);
+    weeks.push({
+      label: w === 0 ? '本週' : `${d.getMonth() + 1}/${d.getDate()}`, now: w === 0,
+      done: inWeek.filter(({ iv }) => ivEnd(iv) <= now).length,
+      sched: inWeek.filter(({ iv }) => ivEnd(iv) > now).length
+    });
+  }
+  // 每週新增投遞（過去 7 週＋本週）
+  const applyWeeks = [];
+  for (let w = -7; w <= 0; w++) {
+    const s = thisWeek + w * 7 * DAY;
+    const d = new Date(s);
+    applyWeeks.push({ label: w === 0 ? '本週' : `${d.getMonth() + 1}/${d.getDate()}`, now: w === 0,
+      done: list.filter((c) => { const t = new Date(c.createdAt).getTime(); return t >= s && t < s + 7 * DAY; }).length, sched: 0 });
+  }
+
+  // 未錄取／婉拒在哪一關結束
+  const lost = list.filter((c) => c.result === '未錄取' || c.result === '候選人婉拒');
+  const lostAt = STAGES.slice(0, 5).map((stage, i) => {
+    const here = lost.filter((c) => reachedIndex(c) === i);
+    return { stage, n: here.length, rej: here.filter((c) => c.result === '未錄取').length, dec: here.filter((c) => c.result === '候選人婉拒').length };
+  });
+  const lostMax = Math.max(1, ...lostAt.map((x) => x.n));
+  const lostTop = [...lostAt].sort((a, b) => b.n - a.n)[0];
+
+  // 面試評分分布
+  const dist = [5, 4, 3, 2, 1].map((n) => ({ n, count: ratedRounds.filter((iv) => iv.rating === n).length }));
+  const distMax = Math.max(1, ...dist.map((x) => x.count));
+
+  // 各職缺招募狀況
+  const positionRows = [...new Set(list.map((c) => c.position))].map((p) => {
+    const ps = list.filter((c) => c.position === p);
+    const pHired = ps.filter((c) => c.result === '錄取');
+    const pClosed = ps.filter((c) => c.stage === '結案');
+    const pDays = avg(pHired.map((c) => { const e = [...c.history].reverse().find((h) => h.stage === '結案'); return e ? (new Date(e.at) - new Date(c.createdAt)) / DAY : null; }).filter((x) => x !== null));
+    return {
+      p, n: ps.length,
+      cells: [esc(p), esc([...new Set(ps.map((c) => c.manager).filter(Boolean))].join('、') || '—'), ps.length,
+        ps.filter((c) => c.stage !== '結案').length, ps.filter((c) => reachedIndex(c) >= 2).length,
+        ps.filter((c) => reachedIndex(c) >= 4).length, pHired.length, pct(pHired.length, pClosed.length),
+        pDays !== null ? `${Math.round(pDays)} 天` : '—']
+    };
+  }).sort((a, b) => b.n - a.n);
+
+  // 面試官負荷
+  const interviewers = [...new Set(allIv.map(({ iv }) => iv.interviewer).filter(Boolean))];
+  const loadRows = interviewers.map((name) => {
+    const mine = allIv.filter(({ iv }) => iv.interviewer === name);
+    const upcoming = mine.filter(({ iv }) => ivStart(iv) >= now && ivStart(iv) <= now + 14 * DAY).length;
+    const scores = mine.map(({ iv }) => iv.rating).filter(Boolean);
+    const myAvg = avg(scores);
+    return { upcoming, cells: [esc(name), mine.filter(({ iv }) => ivEnd(iv) <= now).length, upcoming,
+      list.filter((c) => c.manager === name && c.stage !== '結案').length,
+      myAvg !== null ? myAvg.toFixed(1) : '—'] };
+  }).sort((a, b) => b.upcoming - a.upcoming || b.cells[1] - a.cells[1]);
+
   $('#analysisView').innerHTML = `
     <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」或「面試主管」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
 
@@ -682,11 +778,77 @@ function renderAnalysis() {
 
     <section>
       <h3>各階段平均停留天數</h3>
-      <p class="desc">候選人在每個階段平均等了多久；最久的階段以酒紅色標示，通常是流程卡住的地方。</p>
+      <p class="desc">候選人在每個階段平均等了多久；最久的階段以橘色標示，通常是流程卡住的地方。</p>
       ${showTables
         ? tableHtml(['階段', '平均天數', '人次'], dwell.map((d) => [d.stage, d.avg !== null ? d.avg.toFixed(1) : '—', d.n]))
         : barsHtml(dwellRows, maxDwell)}
+    </section>
+
+    <section>
+      <h3>每週面試量</h3>
+      <p class="desc">過去 7 週到未來 2 週，每週有幾場面試；可以看出面試官哪幾週比較忙。</p>
+      ${showTables
+        ? tableHtml(['週（週一起）', '已進行', '已排定', '合計'], weeks.map((w) => [w.label, w.done, w.sched, w.done + w.sched]))
+        : vbarsHtml(weeks, [['已進行', ''], ['已排定', 'sched']], '場')}
+    </section>
+
+    <div class="grid2">
+      <section>
+        <h3>每週新增投遞</h3>
+        <p class="desc">每週收到幾份履歷，判斷徵才管道是否有效。</p>
+        ${showTables
+          ? tableHtml(['週（週一起）', '新增投遞'], applyWeeks.map((w) => [w.label, w.done]))
+          : vbarsHtml(applyWeeks, null, '位')}
+      </section>
+
+      <section>
+        <h3>面試評分分布</h3>
+        <p class="desc">所有面試輪次的評分；可以看出評分是否太寬鬆或太嚴格。</p>
+        ${showTables
+          ? tableHtml(['評分', '輪數'], dist.map((d) => [`${d.n} 分`, d.count]))
+          : barsHtml(dist.map((d) => ({ label: `${'★'.repeat(d.n)}`, value: d.count, valueHtml: `<b>${d.count}</b>輪`,
+              tip: `${d.n} 分：${d.count} 輪（${pct(d.count, ratedRounds.length)}）` })), distMax)}
+      </section>
+    </div>
+
+    <section>
+      <h3>未錄取／婉拒在哪一關結束</h3>
+      <p class="desc">${lost.length ? `共 ${lost.length} 位沒有成功錄取，最多人在「${lostTop.stage}」結束（以橘色標示），這一關值得檢討。` : '目前還沒有未錄取或婉拒的紀錄。'}</p>
+      ${showTables
+        ? tableHtml(['最後走到的階段', '合計', '公司未錄取', '候選人婉拒'], lostAt.map((x) => [x.stage, x.n, x.rej, x.dec]))
+        : barsHtml(lostAt.map((x) => ({ label: x.stage, value: x.n, hi: lost.length && x === lostTop,
+            valueHtml: `<b>${x.n}</b>人`, tip: `在「${x.stage}」結束：${x.n} 人\n公司未錄取 ${x.rej}・候選人婉拒 ${x.dec}` })), lostMax)}
+    </section>
+
+    <section>
+      <h3>各職缺招募狀況</h3>
+      <p class="desc">每個職缺的進度與成效，依投遞人數排序。</p>
+      ${tableHtml(['職缺', '面試主管', '投遞', '進行中', '進入面試', '到 Offer', '錄取', '錄取率', '平均招募天數'], positionRows.map((r) => r.cells))}
+    </section>
+
+    <section>
+      <h3>面試官負荷</h3>
+      <p class="desc">每位面試官已面試與接下來 14 天的場次，以及平均給分；避免工作集中在少數人身上。</p>
+      ${tableHtml(['面試官', '已面試', '未來 14 天', '負責中候選人', '平均給分'], loadRows.map((r) => r.cells))}
     </section>`;
+}
+
+// 直條圖（每週趨勢用）；series 為 null 表示單一數列
+function vbarsHtml(cols, series, unit) {
+  const max = Math.max(1, ...cols.map((c) => c.done + c.sched));
+  const legend = series ? `<div class="legend">${series.map(([name, cls]) => `<span><i class="vseg ${cls}"></i>${name}</span>`).join('')}</div>` : '';
+  return `${legend}<div class="vbars">${cols.map((c) => {
+    const total = c.done + c.sched;
+    const tipText = series ? `${c.label}：共 ${total} ${unit}\n已進行 ${c.done}・已排定 ${c.sched}` : `${c.label}：${total} ${unit}`;
+    return `<div class="vcol ${c.now ? 'now' : ''}" data-tip="${esc(tipText)}" tabindex="0">
+      <span class="vnum">${total || ''}</span>
+      <div class="vstack">
+        ${c.done ? `<span class="vseg" style="height:${(c.done / max) * 140}px"></span>` : ''}
+        ${c.sched ? `<span class="vseg sched" style="height:${(c.sched / max) * 140}px"></span>` : ''}
+      </div>
+      <span class="vlabel">${esc(c.label)}</span>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // 滑鼠提示（分析圖表用）
@@ -1140,6 +1302,293 @@ $('#clearAllBtn').addEventListener('click', () => {
   save();
   render();
   toast('已清除所有資料');
+});
+
+// ---------- Excel 匯入／匯出 ----------
+// 使用 SheetJS 讀寫 .xlsx；第一次按 Excel 相關按鈕時才從網路載入，平常不影響速度
+const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!loadXlsx.p) {
+    loadXlsx.p = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = XLSX_URL;
+      s.onload = () => resolve(window.XLSX);
+      s.onerror = () => { loadXlsx.p = null; reject(new Error('load failed')); };
+      document.head.appendChild(s);
+    });
+  }
+  return loadXlsx.p;
+}
+async function withXlsx(fn) {
+  try {
+    return await fn(await loadXlsx());
+  } catch (e) {
+    if (e.message === 'load failed') alert('無法載入 Excel 工具，請確認電腦有連上網路後再試一次。');
+    else throw e;
+  }
+}
+
+// Excel 欄位（一列＝一位候選人的一輪面試；同一人有多輪就填多列，姓名與職缺相同即可）
+const XL_COLS = [
+  ['name', '姓名', 10], ['position', '應徵職缺', 12], ['manager', '面試主管', 10],
+  ['email', 'Email', 24], ['phone', '電話', 14], ['stage', '目前階段', 9], ['result', '結案結果', 10],
+  ['round', '面試輪次', 9], ['at', '面試時間', 17], ['duration', '時長（分鐘）', 11],
+  ['interviewer', '面試官', 10], ['location', '地點／方式', 14], ['ivRating', '這輪評分', 8],
+  ['feedback', '這輪評語', 24], ['rating', '綜合評分', 8], ['next', '下一步', 18], ['notes', '備註', 24]
+];
+// 讀取時也接受常見的其他寫法
+const XL_ALIASES = {
+  name: ['姓名', '名字', '候選人', '候選人姓名'],
+  position: ['應徵職缺', '職缺', '職位', '應徵職位'],
+  manager: ['面試主管', '主管', '用人主管'],
+  email: ['email', 'e-mail', '電子郵件', '信箱'],
+  phone: ['電話', '手機', '聯絡電話'],
+  stage: ['目前階段', '階段', '進度'],
+  result: ['結案結果', '結果'],
+  round: ['面試輪次', '輪次'],
+  at: ['面試時間', '面試日期', '時間'],
+  duration: ['時長分鐘', '時長', '面試時長'],
+  interviewer: ['面試官'],
+  location: ['地點方式', '地點', '面試地點', '方式'],
+  ivRating: ['這輪評分', '面試評分'],
+  feedback: ['這輪評語', '面試評語', '評語'],
+  rating: ['綜合評分', '評分'],
+  next: ['下一步'],
+  notes: ['備註', '說明']
+};
+const normHead = (s) => String(s || '').toLowerCase().replace(/[\s()（）\/／]/g, '');
+
+const xlTime = (at) => (at ? at.replace('T', ' ').replace(/-/g, '/') : '');   // 2026-10-09T14:00 → 2026/10/09 14:00
+
+// 把 Excel 的日期（日期格式、數字或文字）轉成 2026-10-09T14:00
+function parseXlTime(v, X) {
+  if (v === '' || v === null || v === undefined) return '';
+  if (v instanceof Date && !isNaN(v)) return toLocalInput(new Date(Math.round(v.getTime() / 60000) * 60000));
+  if (typeof v === 'number') {
+    const d = X.SSF.parse_date_code(v);
+    return d ? `${d.y}-${pad(d.m)}-${pad(d.d)}T${pad(d.H)}:${pad(d.M)}` : null;
+  }
+  const m = String(v).trim().match(/^(?:(\d{4})[\/\-.])?(\d{1,2})[\/\-.](\d{1,2})(?:\s+(?:上午|下午)?\s*(\d{1,2})[:：](\d{2}))?/);
+  if (!m) return null;
+  let h = Number(m[4] || 10);
+  if (/下午/.test(v) && h < 12) h += 12;
+  return `${m[1] || new Date().getFullYear()}-${pad(m[2])}-${pad(m[3])}T${pad(h)}:${m[5] || '00'}`;
+}
+
+function candidatesToRows(list) {
+  const rows = [];
+  const sorted = [...list].sort((a, b) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage) || a.name.localeCompare(b.name, 'zh-Hant'));
+  for (const c of sorted) {
+    const base = { name: c.name, position: c.position, manager: c.manager, email: c.email, phone: c.phone,
+      stage: c.stage, result: c.result, rating: c.rating || '', next: c.next, notes: c.notes };
+    const ivs = [...c.interviews].sort((a, b) => (a.at || '9').localeCompare(b.at || '9'));
+    if (!ivs.length) rows.push(base);
+    ivs.forEach((iv) => rows.push({ ...base, round: iv.round, at: xlTime(iv.at), duration: iv.duration,
+      interviewer: iv.interviewer, location: iv.location, ivRating: iv.rating || '', feedback: iv.feedback }));
+  }
+  return rows;
+}
+
+function buildWorkbook(X, rows) {
+  const sheet = X.utils.aoa_to_sheet([XL_COLS.map((c) => c[1]), ...rows.map((r) => XL_COLS.map(([k]) => r[k] ?? ''))]);
+  sheet['!cols'] = XL_COLS.map((c) => ({ wch: c[2] }));
+  sheet['!autofilter'] = { ref: sheet['!ref'] };
+  const help = X.utils.aoa_to_sheet([
+    ['欄位', '說明'],
+    ['姓名', '必填'],
+    ['應徵職缺', '必填'],
+    ['面試主管', '負責面試的主管'],
+    ['目前階段', `可填：${STAGES.join('、')}（空白＝投遞）`],
+    ['結案結果', `可填：${RESULTS.join('、')}（填了會自動設為結案）`],
+    ['面試輪次', `可填：${ROUND_TYPES.join('、')}`],
+    ['面試時間', '例：2026/10/09 14:00（只填日期會預設上午 10:00）'],
+    ['時長（分鐘）', '空白＝60'],
+    ['這輪評分、綜合評分', '1～5 的數字，空白＝尚未評分'],
+    ['多輪面試', '同一位候選人有多輪面試時，複製一列，姓名與職缺相同、填不同的面試輪次即可'],
+    ['個資提醒', '此檔案含候選人個資，請妥善保存，不要上傳到公開網站']
+  ]);
+  help['!cols'] = [{ wch: 18 }, { wch: 70 }];
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, sheet, '候選人');
+  X.utils.book_append_sheet(wb, help, '填寫說明');
+  return wb;
+}
+
+$('#xlsxTemplateBtn').addEventListener('click', () => withXlsx((X) => {
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  const tomorrow = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+  const examples = [
+    { name: '王範例', position: '前端工程師', manager: '張經理', email: 'example1@example.com', phone: '0912-000-111',
+      stage: '一面', round: '一面', at: `${tomorrow} 14:00`, duration: 60, interviewer: '張經理', location: '會議室 A',
+      next: '面試前寄出題目', notes: '這一列是範例，可以刪除' },
+    { name: '陳範例', position: 'UI 設計師', manager: '林總監', email: 'example2@example.com', stage: '履歷篩選',
+      next: '約一面', notes: '沒有排面試的人，面試欄位留空即可' }
+  ];
+  X.writeFile(buildWorkbook(X, examples), '面試看板_匯入範本.xlsx');
+  toast('已下載 Excel 範本，填好後按「匯入 Excel」');
+}));
+
+$('#xlsxExportBtn').addEventListener('click', () => withXlsx((X) => {
+  if (!candidates.length) return toast('目前沒有資料可以匯出');
+  X.writeFile(buildWorkbook(X, candidatesToRows(candidates)), `面試看板_${dateKey(new Date())}.xlsx`);
+  toast('已匯出 Excel。檔案內含個資，請妥善保存');
+}));
+
+// 讀取 Excel → 整理成候選人（同姓名＋職缺的多列合併成多輪面試）
+function rowsToCandidates(X, aoa) {
+  const headerIdx = aoa.findIndex((r) => r.some((v) => XL_ALIASES.name.includes(normHead(v))));
+  if (headerIdx < 0) return { error: '找不到「姓名」欄位，請確認第一列是欄位名稱（可以先下載範本參考）。' };
+  const colOf = {};
+  aoa[headerIdx].forEach((h, i) => {
+    const n = normHead(h);
+    for (const [key, names] of Object.entries(XL_ALIASES)) {
+      if (colOf[key] === undefined && names.includes(n)) colOf[key] = i;
+    }
+  });
+
+  const groups = new Map();
+  const skipped = [];
+  const warnings = [];
+  let rowsRead = 0;
+  aoa.slice(headerIdx + 1).forEach((r, i) => {
+    const rowNo = headerIdx + i + 2;   // Excel 上看到的列號
+    const get = (k) => (colOf[k] === undefined ? '' : r[colOf[k]]);
+    const txt = (k) => String(get(k) ?? '').trim();
+    if (r.every((v) => String(v ?? '').trim() === '')) return;   // 空白列
+    rowsRead++;
+    const name = txt('name');
+    const position = txt('position');
+    if (!name) return skipped.push(`第 ${rowNo} 列：缺少姓名`);
+    if (!position) return skipped.push(`第 ${rowNo} 列（${name}）：缺少應徵職缺`);
+
+    const key = `${name}|${position}`;
+    let g = groups.get(key);
+    if (!g) {
+      let stage = txt('stage');
+      let result = txt('result');
+      if (RESULTS.includes(stage)) { result = stage; stage = '結案'; }
+      if (!stage) stage = result ? '結案' : '投遞';
+      if (!STAGES.includes(stage)) { warnings.push(`第 ${rowNo} 列：階段「${stage}」無法辨識，已設為「投遞」`); stage = '投遞'; }
+      if (result && !RESULTS.includes(result)) { warnings.push(`第 ${rowNo} 列：結案結果「${result}」無法辨識，已略過`); result = ''; }
+      if (result) stage = '結案';
+      g = { name, position, manager: txt('manager'), email: txt('email'), phone: txt('phone'), stage, result,
+        rating: parseInt(get('rating'), 10) || 0, next: txt('next'), notes: txt('notes'), interviews: [] };
+      groups.set(key, g);
+    } else {
+      for (const k of ['manager', 'email', 'phone', 'next', 'notes']) if (!g[k]) g[k] = txt(k);
+    }
+
+    const rawAt = get('at');
+    const at = parseXlTime(rawAt, X);
+    if (at === null) warnings.push(`第 ${rowNo} 列：面試時間「${rawAt}」看不懂，已略過時間（範例：2026/10/09 14:00）`);
+    const round = txt('round');
+    if (at || round || txt('interviewer') || txt('feedback')) {
+      if (round && !ROUND_TYPES.includes(round)) warnings.push(`第 ${rowNo} 列：面試輪次「${round}」不在選項中，已設為「其他」`);
+      g.interviews.push({
+        round: ROUND_TYPES.includes(round) ? round : round ? '其他' : (['一面', '二面', '三面'][g.interviews.length] || '其他'),
+        at: at || '', duration: parseInt(get('duration'), 10) || 60,
+        interviewer: txt('interviewer') || g.manager, location: txt('location'),
+        rating: parseInt(get('ivRating'), 10) || 0, feedback: txt('feedback')
+      });
+    }
+  });
+
+  const now = nowIso();
+  const list = migrate([...groups.values()].map((g) => ({ ...g, history: [{ stage: g.stage, at: now }], createdAt: now, stageSince: now })));
+  return { list, skipped, warnings, rowsRead };
+}
+
+// 和現有資料比對是否為同一人
+function isExisting(c) {
+  const email = c.email.toLowerCase();
+  const phone = digits(c.phone);
+  return candidates.some((o) =>
+    (email && o.email.toLowerCase() === email) ||
+    (phone.length >= 8 && digits(o.phone) === phone) ||
+    (o.name === c.name && o.position === c.position));
+}
+
+let pendingImport = null;
+const importDialog = $('#importDialog');
+
+$('#xlsxInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  withXlsx(async (X) => {
+    let aoa;
+    try {
+      const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+      const ws = wb.Sheets['候選人'] || wb.Sheets[wb.SheetNames[0]];
+      aoa = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    } catch (err) {
+      return alert('無法讀取這個檔案，請確認是 Excel 檔（.xlsx）。');
+    }
+    const res = rowsToCandidates(X, aoa);
+    if (res.error) return alert(res.error);
+    if (!res.list.length) return alert(`沒有可以匯入的資料。\n${res.skipped.slice(0, 5).join('\n')}`);
+    pendingImport = res;
+    showImportPreview();
+  });
+});
+
+function showImportPreview() {
+  const { list, skipped, warnings, rowsRead } = pendingImport;
+  const dups = list.filter(isExisting);
+  const ivCount = list.reduce((s, c) => s + c.interviews.length, 0);
+  const listBlock = (title, items, cls) => items.length
+    ? `<details class="import-notes ${cls}" ${items.length <= 5 ? 'open' : ''}><summary>${title}（${items.length}）</summary><ul>${items.slice(0, 30).map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>` : '';
+
+  $('#importSummary').innerHTML = `
+    <p class="import-big">讀到 <b>${rowsRead}</b> 列 → <b>${list.length}</b> 位候選人、<b>${ivCount}</b> 場面試</p>
+    ${dups.length ? `<p class="warn dup">其中 ${dups.length} 位和現有資料重複（${dups.slice(0, 5).map((c) => esc(dn(c))).join('、')}${dups.length > 5 ? '…' : ''}）</p>` : ''}
+    ${listBlock('略過的列', skipped, 'bad')}
+    ${listBlock('已自動修正', warnings, 'fix')}`;
+
+  const head = ['姓名', '職缺', '面試主管', '階段', '面試', '狀態'];
+  $('#importTable').innerHTML = `<table class="data-table import-table">
+    <thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${list.slice(0, 50).map((c) => `<tr>
+      <td>${esc(dn(c))}</td><td>${esc(c.position)}</td><td>${esc(c.manager || '—')}</td>
+      <td>${esc(c.stage)}${c.result ? `（${esc(c.result)}）` : ''}</td>
+      <td>${c.interviews.length ? c.interviews.map((iv) => esc(iv.round)).join('、') : '—'}</td>
+      <td>${isExisting(c) ? '<span class="pill p-stuck">重複</span>' : '<span class="pill p-good">新增</span>'}</td>
+    </tr>`).join('')}</tbody></table>
+    ${list.length > 50 ? `<p class="hint">只顯示前 50 位，其餘 ${list.length - 50} 位也會一起匯入。</p>` : ''}`;
+  updateImportButton();
+  importDialog.showModal();
+}
+
+function updateImportButton() {
+  if (!pendingImport) return;
+  const f = $('#importForm').elements;
+  const replace = f.mode.value === 'replace';
+  $('#importForm .skip-dup').hidden = replace;
+  const n = replace || !f.skipDup.checked ? pendingImport.list.length : pendingImport.list.filter((c) => !isExisting(c)).length;
+  $('#importConfirm').textContent = replace ? `取代為 ${n} 位` : `匯入 ${n} 位`;
+  $('#importConfirm').disabled = n === 0;
+}
+$('#importForm').addEventListener('change', updateImportButton);
+$('#importCancel').addEventListener('click', () => { pendingImport = null; importDialog.close(); });
+
+$('#importForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!pendingImport) return;
+  const f = $('#importForm').elements;
+  let incoming = pendingImport.list;
+  if (f.mode.value === 'replace') {
+    if (candidates.length && !confirm(`這會刪除目前的 ${candidates.length} 位候選人，改成 Excel 裡的 ${incoming.length} 位，無法復原。\n建議先「匯出 Excel」或「匯出 JSON」備份。確定嗎？`)) return;
+    candidates = incoming;
+  } else {
+    if (f.skipDup.checked) incoming = incoming.filter((c) => !isExisting(c));
+    candidates = candidates.concat(incoming);
+  }
+  save();
+  pendingImport = null;
+  importDialog.close();
+  render();
+  toast(`已從 Excel 匯入 ${incoming.length} 位候選人`);
 });
 
 // ---------- 啟動 ----------
