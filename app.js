@@ -70,6 +70,24 @@ function downloadFile(content, filename, type) {
 let candidates = load();
 let meta = loadMeta();
 
+// 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
+const DEMO_VERSION = 2;
+upgradeDemo();
+
+function upgradeDemo() {
+  if (meta.demoVersion >= DEMO_VERSION) return;
+  const OLD_DEMO = new Set(['王小明', '陳怡君', '林志豪', '黃雅婷', '周文傑', '吳建宏', '蔡佩珊',
+    '劉家瑜', '鄭家豪', '許庭瑋', '何思穎', '蘇冠廷', '江雨晴', '楊子豪']);
+  const onlyOldDemo = candidates.length > 0 &&
+    candidates.every((c) => OLD_DEMO.has(c.name) && (!c.email || c.email === 'ming@example.com'));
+  if (onlyOldDemo) {
+    candidates = sampleData();
+    save();
+  }
+  meta.demoVersion = DEMO_VERSION;
+  saveMeta();
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
