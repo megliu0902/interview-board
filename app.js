@@ -6,6 +6,14 @@
 const STAGES = ['投遞', '履歷篩選', '一面', '二面', 'Offer', '結案'];
 const RESULTS = ['錄取', '未錄取', '候選人婉拒'];
 const ROUND_TYPES = ['電話篩選', '一面', '二面', '三面', '主管面談', '其他'];
+// 結構化評分的 5 個面向：[代號, 名稱, 說明]
+const SCORE_ITEMS = [
+  ['pro', '專業能力', '職務需要的技術或專業知識'],
+  ['comm', '溝通表達', '表達是否清楚、能否聽懂問題'],
+  ['solve', '解決問題', '面對新問題的思考方式'],
+  ['culture', '文化契合', '價值觀、工作方式是否適合團隊'],
+  ['motive', '學習動機', '對職務的熱情與成長意願']
+];
 const STORAGE_KEY = 'interview-board-v1';
 const META_KEY = 'interview-board-meta';   // 記錄上次備份時間、遮蔽模式等設定
 
@@ -47,13 +55,39 @@ function formatDate(iso) {
 const isTime = (v) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v || '');
 const isDate = (v) => v && !isNaN(new Date(v));
 
-function toast(msg) {
+// 提示訊息；有可以復原的動作時，會多一個「復原」按鈕
+function toast(msg, opts = {}) {
   const el = $('#toast');
-  el.textContent = msg;
+  el.innerHTML = `<span>${esc(msg)}</span>${opts.undo && undoStack.length ? '<button type="button" class="toast-undo">復原</button>' : ''}`;
   el.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.classList.remove('show'), 2800);
+  toast.timer = setTimeout(() => el.classList.remove('show'), opts.undo ? 6000 : 2800);
 }
+
+// ---------- 復原（最多記住 20 步）----------
+const undoStack = [];
+function pushUndo(label) {
+  undoStack.push({ label, data: JSON.stringify(candidates), rooms: meta && meta.rooms ? [...meta.rooms] : null });
+  if (undoStack.length > 20) undoStack.shift();
+}
+function undo() {
+  const last = undoStack.pop();
+  if (!last) return toast('沒有可以復原的動作');
+  candidates = JSON.parse(last.data);
+  if (last.rooms) meta.rooms = last.rooms;
+  save();
+  saveMeta();
+  render();
+  toast(`已復原：${last.label}`);
+}
+document.addEventListener('click', (e) => { if (e.target.closest('.toast-undo')) undo(); });
+document.addEventListener('keydown', (e) => {
+  // 正在輸入文字、或有視窗開著時，Ctrl+Z 交給瀏覽器處理
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
+  if (e.target.closest('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return;
+  e.preventDefault();
+  undo();
+});
 
 // 下載檔案（行事曆 .ics 用）
 function downloadFile(content, filename, type) {
@@ -71,7 +105,7 @@ let candidates = load();
 let meta = loadMeta();
 
 // 示範資料改版時，自動把「舊版示範資料」換成新版；只要有任何真實資料就不動
-const DEMO_VERSION = 8;
+const DEMO_VERSION = 9;
 upgradeDemo();
 
 function upgradeDemo() {
@@ -125,7 +159,8 @@ function migrate(list) {
         interviewer: str(iv.interviewer, 40),
         location: str(iv.location, 60),
         rating: num(iv.rating, 0, 5, 0),
-        feedback: str(iv.feedback, 2000)
+        feedback: str(iv.feedback, 2000),
+        scores: Object.fromEntries(SCORE_ITEMS.map(([k]) => [k, num(iv.scores?.[k], 0, 5, 0)]).filter(([, v]) => v))
       }));
 
       // 階段異動歷程（漏斗分析用）；舊資料只知道目前階段
@@ -265,10 +300,15 @@ function sampleData() {
       else offset = -Math.max(1, Math.floor(times[idx]) - int(1, 2));           // 已經面過
       const done = offset < 0;
       const failedHere = closed && result === '未錄取' && lastIdx === idx;
+      const base = done ? (failedHere ? int(1, 2) : int(3, 5)) : 0;
+      // 結構化評分：5 個面向在整體分數上下 1 分內浮動，這輪評分＝細項平均
+      const scores = done ? Object.fromEntries(SCORE_ITEMS.map(([k]) => [k, Math.min(5, Math.max(1, base + pick([-1, 0, 0, 1])))])) : {};
+      const vals = Object.values(scores);
       interviews.push({
         round, interviewer, at: slot(offset), duration: pick([45, 60, 60, 90]), location: pick(LOCATIONS),
-        rating: done ? (failedHere ? int(1, 2) : int(3, 5)) : 0,
-        feedback: done ? (failedHere ? pick(BAD) : rnd() < 0.7 ? pick(GOOD) : pick(SO_SO)) : ''
+        rating: vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0,
+        feedback: done ? (failedHere ? pick(BAD) : rnd() < 0.7 ? pick(GOOD) : pick(SO_SO)) : '',
+        scores
       });
     };
     // 部分履歷篩選中的人先排電話篩選
@@ -406,6 +446,8 @@ let editingId = null;
 let currentRating = 0;
 let showTables = false;   // 分析頁：以表格檢視
 let analysisRange = 'all'; // 分析頁：分析期間（all／30／90／year）
+let compPosition = '';     // 分析頁：候選人比較的職缺
+let compHighlight = null;  // 從編輯視窗點「和同職缺比較」時要標示的人
 
 function filtered() {
   const q = $('#searchInput').value.trim().toLowerCase();
@@ -540,6 +582,7 @@ $('#roomForm').addEventListener('submit', (e) => {
   const old = getRooms();
   const next = roomDraft.map((r) => r.trim()).filter(Boolean).filter((r, i, a) => a.indexOf(r) === i);
   if (!next.length) return toast('至少要保留一間會議室');
+  pushUndo('修改會議室');
   // 改名的會議室：同步更新已排定面試的地點
   old.forEach((name, i) => {
     const renamed = roomDraft[i] !== undefined && roomDraft.length === old.length ? roomDraft[i].trim() : null;
@@ -550,7 +593,7 @@ $('#roomForm').addEventListener('submit', (e) => {
   save();
   roomDialog.close();
   render();
-  toast(`已儲存 ${next.length} 間會議室`);
+  toast(`已儲存 ${next.length} 間會議室`, { undo: true });
 });
 
 function renderStats() {
@@ -658,7 +701,8 @@ function cardHtml(c) {
   const options = STAGES.map((s) => `<option${s === c.stage ? ' selected' : ''}>${s}</option>`).join('');
 
   return `
-    <article class="card ${stuck ? 'stuck' : ''}" draggable="true" data-id="${c.id}">
+    <article class="card ${stuck ? 'stuck' : ''} ${batchMode && selected.has(c.id) ? 'picked' : ''}" draggable="${batchMode ? 'false' : 'true'}" data-id="${c.id}">
+      ${batchMode ? `<span class="pick-box" aria-hidden="true">${selected.has(c.id) ? '✓' : ''}</span>` : ''}
       <button type="button" class="name">${esc(dn(c))}</button>
       <span class="role">${esc(c.position)}${c.department ? `<span class="dept-tag">${esc(c.department)}</span>` : ''}</span>
       ${pills.length ? `<div class="pills">${pills.join('')}</div>` : ''}
@@ -680,7 +724,7 @@ function renderBoard() {
       <section class="column" data-stage="${stage}">
         <div class="col-head">
           <h3><img class="stage-icon" src="images/stage-${i + 1}.svg" alt=""><span><span class="col-num">${pad(i + 1)}</span>${stage}</span></h3>
-          <small>${cards.length} 人</small>
+          <small>${cards.length} 人${batchMode && cards.length ? `<button type="button" class="link-btn col-all" data-col="${stage}">全選</button>` : ''}</small>
         </div>
         ${cards.length ? cards.map(cardHtml).join('') : '<p class="empty"><img src="images/empty.svg" alt="">沒有符合的候選人</p>'}
       </section>`;
@@ -1062,10 +1106,44 @@ function renderAnalysis() {
       mHired.length, pct(mHired.length, mClosed.length), mDays !== null ? `${Math.round(mDays)} 天` : '—'] };
   }).sort((a, b) => b.n - a.n);
 
+  // ---- 同職缺候選人比較（結構化評分）----
+  const hasScore = (iv) => iv.rating || Object.keys(iv.scores || {}).length;
+  const scoredPositions = [...new Set(list.filter((c) => c.interviews.some(hasScore)).map((c) => c.position))];
+  const cp = pos || (scoredPositions.includes(compPosition) ? compPosition : scoredPositions[0] || '');
+  const compRows = list.filter((c) => c.position === cp && c.interviews.some(hasScore)).map((c) => {
+    const ivs = c.interviews.filter(hasScore);
+    return {
+      c, n: ivs.length,
+      crit: SCORE_ITEMS.map(([k]) => avg(ivs.map((iv) => iv.scores?.[k]).filter(Boolean))),
+      overall: avg(ivs.map((iv) => iv.rating).filter(Boolean))
+    };
+  }).sort((a, b) => (b.overall || 0) - (a.overall || 0));
+  const colBest = [...SCORE_ITEMS.map((_, i) => Math.max(0, ...compRows.map((r) => r.crit[i] || 0))), Math.max(0, ...compRows.map((r) => r.overall || 0))];
+  const scoreCell = (v, best) => {
+    if (v === null) return '<td class="sc">—</td>';
+    const t = (v - 1) / 4;
+    return `<td class="sc" style="background: rgba(0, 106, 224, ${(0.08 + t * 0.72).toFixed(2)}); color: ${t > 0.55 ? '#fff' : 'var(--fg)'}">${v === best && compRows.length > 1 ? '★ ' : ''}${v.toFixed(1)}</td>`;
+  };
+  const compareHtml = cp ? `
+    <div class="compare-pick">職缺
+      <select id="compareSel" aria-label="比較的職缺" ${pos ? 'disabled' : ''}>${scoredPositions.map((p) => `<option${p === cp ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
+      <span class="hint">共 ${compRows.length} 位有評分，依總平均排序；★ 是該項最高分。</span>
+    </div>
+    <div class="table-wrap"><table class="data-table compare-table">
+      <thead><tr><th>候選人</th><th>目前狀態</th><th class="num">已評輪數</th>${SCORE_ITEMS.map(([, l, h]) => `<th class="num" title="${h}">${l}</th>`).join('')}<th class="num">總平均</th></tr></thead>
+      <tbody>${compRows.map((r) => `<tr class="${r.c.id === compHighlight ? 'hl' : ''}">
+        <td><button type="button" class="focus-link" data-open="${r.c.id}">${esc(dn(r.c))}</button></td>
+        <td>${esc(r.c.stage)}${r.c.result ? `（${esc(r.c.result)}）` : ''}</td>
+        <td class="num">${r.n}</td>
+        ${r.crit.map((v, i) => scoreCell(v, colBest[i])).join('')}
+        ${scoreCell(r.overall, colBest[SCORE_ITEMS.length])}
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<p class="hint">還沒有任何面試評分。在編輯視窗的「評分細項」填寫後，這裡就會出現比較表。</p>';
+
   $('#analysisView').innerHTML = `
     <nav class="dash-nav" aria-label="儀表板段落">
       <a href="#a-focus">今日焦點</a><a href="#a-kpi">關鍵指標</a><a href="#a-funnel">漏斗與流程</a>
-      <a href="#a-dept">部門統計</a><a href="#a-trend">趨勢</a><a href="#a-heat">熱度圖</a><a href="#a-team">職缺與團隊</a>
+      <a href="#a-dept">部門統計</a><a href="#a-trend">趨勢</a><a href="#a-heat">熱度圖</a><a href="#a-team">職缺與團隊</a><a href="#a-compare">候選人比較</a>
     </nav>
     ${rangeBar}
     <p class="note-line">分析範圍：${scope}，共 ${list.length} 位候選人。可用上方「職缺」或「面試主管」選單切換。${migratedOnly ? `其中 ${migratedOnly} 位是舊資料，只記得目前階段，漏斗數字可能偏低。` : ''}</p>
@@ -1203,7 +1281,14 @@ function renderAnalysis() {
       <h3>面試官負荷與給分傾向</h3>
       <p class="desc">每位面試官已面試與接下來 14 天的場次；平均給分比全體高或低 0.4 分以上，會標示偏寬鬆或偏嚴格，方便校準評分標準。</p>
       ${tableHtml(['面試官', '已面試', '未來 14 天', '負責中候選人', '平均給分', '給分傾向'], loadRows.map((r) => r.cells))}
+    </section>
+
+    <section id="a-compare">
+      <h3>同職缺候選人比較</h3>
+      <p class="desc">把同一個職缺的候選人放在一起，比較 5 個評分面向（多輪面試取平均），顏色越深分數越高。點姓名可打開資料。</p>
+      ${compareHtml}
     </section>`;
+  compHighlight = null;
 }
 
 // 熱度表：顏色深淺代表數量（單一藍色，由淺到深），格子裡也寫數字
@@ -1255,6 +1340,20 @@ document.addEventListener('focusin', (e) => {
   if (el) { const r = el.getBoundingClientRect(); showTip(el, r.left, r.bottom); }
 });
 document.addEventListener('focusout', () => { tip.hidden = true; });
+
+$('#analysisView').addEventListener('change', (e) => {
+  if (e.target.id === 'compareSel') { compPosition = e.target.value; renderAnalysis(); document.querySelector('#a-compare').scrollIntoView(); }
+});
+
+// 編輯視窗的「和同職缺比較」：切到分析頁的比較表，並標示這個人
+$('#compareBtn').addEventListener('click', () => {
+  const position = form.elements.position.value.trim();
+  compPosition = position;
+  compHighlight = editingId;
+  modal.close();
+  document.querySelector('.tab[data-view="analysis"]').click();
+  document.querySelector('#a-compare')?.scrollIntoView({ behavior: 'smooth' });
+});
 
 $('#analysisView').addEventListener('click', (e) => {
   if (e.target.id === 'tableToggle') { showTables = !showTables; renderAnalysis(); }
@@ -1323,13 +1422,17 @@ function newRound(existing, at = '') {
   const round = ['一面', '二面', '三面', '主管面談'].find((r) => !used.includes(r)) || '其他';
   // 面試官預設帶入面試主管，可以再改
   const interviewer = form.elements.manager.value.trim();
-  return { id: newId(), round, at, duration: 60, interviewer, location: '', rating: 0, feedback: '' };
+  return { id: newId(), round, at, duration: 60, interviewer, location: '', rating: 0, feedback: '', scores: {} };
 }
 
 function roundHtml(r) {
   const opt = (list, v) => list.map((x) => `<option${x === v ? ' selected' : ''}>${x}</option>`).join('');
   const ratingOpts = ['尚未評分', '1 分', '2 分', '3 分', '4 分', '5 分']
     .map((t, i) => `<option value="${i}"${i === r.rating ? ' selected' : ''}>${t}</option>`).join('');
+  const scores = r.scores || {};
+  const hasScores = SCORE_ITEMS.some(([k]) => scores[k]);
+  const scoreSel = (k) => ['—', '1', '2', '3', '4', '5']
+    .map((t, i) => `<option value="${i}"${i === (scores[k] || 0) ? ' selected' : ''}>${t}</option>`).join('');
   return `
     <fieldset class="round" data-rid="${esc(r.id)}">
       <legend><select class="r-round" aria-label="面試輪次">${opt(ROUND_TYPES, r.round)}</select></legend>
@@ -1340,10 +1443,20 @@ function roundHtml(r) {
         <label>地點／會議室<input class="r-location" maxlength="60" value="${esc(r.location)}" list="roomOptions" placeholder="點一下選會議室，或自行輸入"></label>
         <label>這輪評分<select class="r-rating">${ratingOpts}</select></label>
       </div>
+      <details class="r-scores-box" ${hasScores ? 'open' : ''}>
+        <summary>評分細項（1～5 分，填了會自動算出這輪評分）</summary>
+        <div class="r-scores">${SCORE_ITEMS.map(([k, label, hint]) => `
+          <label title="${hint}">${label}<select data-score="${k}">${scoreSel(k)}</select></label>`).join('')}
+        </div>
+      </details>
       <label>這輪評語<textarea class="r-feedback pii" rows="2" placeholder="面試官對這一輪的評價">${esc(r.feedback)}</textarea></label>
       <p class="warn r-conflict" hidden></p>
+      <div class="r-slots" hidden></div>
       <div class="round-actions">
-        <button type="button" class="btn ghost small" data-r="ics">加入行事曆</button>
+        <button type="button" class="btn ghost small" data-r="slots" title="依面試官與會議室的空檔，建議可以排的時間">🔍 找空檔</button>
+        <button type="button" class="btn ghost small" data-r="invite" title="用你的郵件軟體寄出面試邀請">✉ 寄邀請信</button>
+        <button type="button" class="btn ghost small" data-r="resched" title="時間改了之後，寄改期通知">✉ 寄改期通知</button>
+        <button type="button" class="btn ghost small" data-r="ics">📅 加入行事曆</button>
         <span class="spacer"></span>
         <button type="button" class="link-btn" data-r="remove">移除這一輪</button>
       </div>
@@ -1365,7 +1478,8 @@ function readRounds() {
     interviewer: fs.querySelector('.r-interviewer').value.trim(),
     location: fs.querySelector('.r-location').value.trim(),
     rating: Number(fs.querySelector('.r-rating').value) || 0,
-    feedback: fs.querySelector('.r-feedback').value.trim()
+    feedback: fs.querySelector('.r-feedback').value.trim(),
+    scores: Object.fromEntries([...fs.querySelectorAll('[data-score]')].map((s) => [s.dataset.score, Number(s.value) || 0]).filter(([, v]) => v))
   }));
 }
 
@@ -1415,6 +1529,7 @@ function openModal(id, presetDate) {
   $('#modalEyebrow').textContent = c ? 'EDIT CANDIDATE' : 'NEW CANDIDATE';
   $('#modalTitle').textContent = c ? dn(c) : '新增候選人';
   $('#deleteBtn').hidden = !c;
+  $('#compareBtn').hidden = !c;
 
   let rounds = [];
   if (c) {
@@ -1460,13 +1575,19 @@ function readForm() {
     notes: f.notes.value.trim(),
     rating: currentRating,
     // 完全空白的輪次不存
-    interviews: readRounds().filter((r) => r.at || r.interviewer || r.location || r.feedback || r.rating)
+    interviews: readRounds().filter((r) => r.at || r.interviewer || r.location || r.feedback || r.rating || Object.keys(r.scores).length)
   };
 }
 
 form.addEventListener('input', (e) => {
   const t = e.target;
   if (t.closest('#roundsList')) checkRoundConflicts();
+  // 填了評分細項 → 自動算出這輪評分（細項平均，四捨五入）
+  if (t.dataset.score) {
+    const fs = t.closest('.round');
+    const vals = [...fs.querySelectorAll('[data-score]')].map((s) => Number(s.value)).filter(Boolean);
+    if (vals.length) fs.querySelector('.r-rating').value = String(Math.round(vals.reduce((s, v) => s + v, 0) / vals.length));
+  }
   if (['name', 'email', 'phone'].includes(t.name)) checkDuplicates();
   // 選了結案結果，就自動把階段移到「結案」
   if (t.name === 'result' && t.value) form.elements.stage.value = '結案';
@@ -1500,11 +1621,102 @@ $('#roundsList').addEventListener('click', (e) => {
     renderRounds(left);
     checkRoundConflicts();
   }
-  if (btn.dataset.r === 'ics') {
-    const data = readForm();
-    downloadIcs(data, readRounds().find((r) => r.id === fs.dataset.rid));
+  const round = readRounds().find((r) => r.id === fs.dataset.rid);
+  if (btn.dataset.r === 'ics') downloadIcs(readForm(), round);
+  if (btn.dataset.r === 'invite') sendMail(readForm(), round, 'invite');
+  if (btn.dataset.r === 'resched') sendMail(readForm(), round, 'resched');
+  if (btn.dataset.r === 'slots') showFreeSlots(fs, round);
+  // 點建議的空檔 → 自動填入時間與會議室
+  if (btn.dataset.r === 'pick') {
+    fs.querySelector('.r-at').value = btn.dataset.at;
+    if (btn.dataset.room) fs.querySelector('.r-location').value = btn.dataset.room;
+    fs.querySelector('.r-slots').hidden = true;
+    checkRoundConflicts();
+    toast(`已排入 ${formatTime(btn.dataset.at)}${btn.dataset.room ? '・' + btn.dataset.room : ''}`);
   }
 });
+
+// ---------- 智慧找空檔 ----------
+// 從指定日期（沒填就從今天）開始，往後找 5 個上班日；面試官、會議室、候選人自己都沒衝突的時段
+function findFreeSlots(round, ownerId, ownerRounds, limit = 12) {
+  const duration = Number(round.duration) || 60;
+  const rooms = getRooms().filter(isPhysicalRoom);
+  // 地點填的是線上 → 不用找會議室；填了實體會議室 → 只找那間；沒填 → 任何一間空的實體會議室
+  const wantRooms = isOnline(round.location) ? [null] : round.location && rooms.includes(round.location) ? [round.location] : rooms;
+  const busy = [];   // 所有可能衝突的面試
+  candidates.forEach((c) => {
+    if (c.stage === '結案') return;
+    (c.id === ownerId ? ownerRounds : c.interviews).forEach((iv) => { if (iv.at && iv.id !== round.id) busy.push({ iv, self: c.id === ownerId }); });
+  });
+  if (!candidates.some((c) => c.id === ownerId)) ownerRounds.forEach((iv) => { if (iv.at && iv.id !== round.id) busy.push({ iv, self: true }); });
+
+  const start = new Date(round.at ? round.at.slice(0, 10) + 'T00:00' : Date.now());
+  start.setHours(0, 0, 0, 0);
+  const results = [];
+  let days = 0;
+  for (let d = new Date(start); days < 5 && results.length < limit; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    days++;
+    for (let mins = 9 * 60; mins + duration <= 18 * 60 && results.length < limit; mins += 30) {
+      if (mins < 13 * 60 && mins + duration > 12 * 60) continue;   // 避開 12:00～13:00 午休
+      const s = new Date(d); s.setHours(0, mins, 0, 0);
+      if (s.getTime() < Date.now() + 30 * 60000) continue;           // 太接近現在或已過去的不建議
+      const e = s.getTime() + duration * 60000;
+      const overlapping = busy.filter(({ iv }) => s.getTime() < ivEnd(iv) && ivStart(iv) < e);
+      if (overlapping.some(({ iv, self }) => self || (round.interviewer && iv.interviewer === round.interviewer))) continue;
+      const room = wantRooms.find((r) => r === null || !overlapping.some(({ iv }) => iv.location === r));
+      if (room === undefined) continue;
+      results.push({ at: toLocalInput(s), room });
+    }
+  }
+  return results;
+}
+
+function showFreeSlots(fs, round) {
+  const box = fs.querySelector('.r-slots');
+  if (!box.hidden) { box.hidden = true; return; }
+  const slots = findFreeSlots(round, editingId, readRounds());
+  const who = round.interviewer ? `面試官「${esc(round.interviewer)}」` : '（沒填面試官，只檢查會議室）';
+  box.innerHTML = slots.length
+    ? `<p class="slots-title">${who}從 ${formatDate(round.at ? round.at.slice(0, 10) : nowIso())} 起 5 個上班日的空檔（${round.duration || 60} 分鐘，已避開午休）：</p>
+       <div class="slot-chips">${slots.map((s) => `<button type="button" class="slot-chip" data-r="pick" data-at="${s.at}" data-room="${esc(s.room || '')}">
+         ${formatTime(s.at)}${s.room ? `<small>${esc(s.room)}</small>` : ''}</button>`).join('')}</div>`
+    : `<p class="slots-title">${who}在這 5 個上班日都沒有空檔，試試改日期或縮短面試時間。</p>`;
+  box.hidden = false;
+}
+
+// ---------- 寄面試邀請信／改期通知（打開你的郵件軟體，由你確認後寄出）----------
+function sendMail(c, round, type) {
+  if (!c.email) return toast('請先在「基本資料」填寫候選人的 Email');
+  if (!round || !round.at) return toast('請先填寫這一輪的面試時間');
+  const end = toLocalInput(new Date(ivEnd(round))).slice(11);
+  const place = round.location ? (isOnline(round.location) ? `${round.location}（會議連結將另行提供）` : `${round.location}`) : '另行通知';
+  const subject = type === 'invite'
+    ? `【面試邀請】${c.position}－${round.round}｜Dawning Technology Inc.`
+    : `【面試時間異動】${c.position}－${round.round}｜Dawning Technology Inc.`;
+  const body = [
+    `${c.name} 您好：`,
+    '',
+    type === 'invite'
+      ? `感謝您應徵本公司「${c.position}」職缺，誠摯邀請您參加${round.round}，相關資訊如下：`
+      : `很抱歉，原訂的${round.round}時間需要調整，新的面試資訊如下：`,
+    '',
+    `・日期時間：${formatTime(round.at)}～${end}（約 ${round.duration || 60} 分鐘）`,
+    `・地點／方式：${place}`,
+    round.interviewer ? `・面試官：${round.interviewer}` : '',
+    '',
+    type === 'invite'
+      ? '請回覆此信確認是否可以出席；若時間不便，也請告訴我們您方便的時段，我們會再為您安排。'
+      : '造成您的不便，敬請見諒。請回覆此信確認新的時間是否可行，若不方便也歡迎提出其他時段。',
+    '',
+    '敬祝 順心',
+    '',
+    'Dawning Technology Inc.',
+    'HR Operations Dept.'
+  ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n');
+  location.href = `mailto:${encodeURIComponent(c.email).replace(/%40/g, '@')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  toast('已開啟郵件軟體，請確認內容後再按寄出');
+}
 
 $('#starInput').addEventListener('click', (e) => {
   const n = Number(e.target.dataset.star);
@@ -1528,41 +1740,61 @@ form.addEventListener('submit', (e) => {
   } else {
     data.stageSince = old.stageSince;
   }
+  pushUndo(`${old ? '修改' : '新增'} ${dn(data)}`);
   if (idx >= 0) candidates[idx] = data; else candidates.push(data);
   save();
   modal.close();
   render();
-  toast(`已儲存 ${dn(data)}`);
+  toast(`已儲存 ${dn(data)}`, { undo: true });
 });
 
 $('#cancelBtn').addEventListener('click', () => modal.close());
 
 $('#deleteBtn').addEventListener('click', () => {
   const c = candidates.find((x) => x.id === editingId);
-  if (!c || !confirm(`確定要刪除「${dn(c)}」嗎？此動作無法復原。`)) return;
+  if (!c || !confirm(`確定要刪除「${dn(c)}」嗎？（刪除後可以按「復原」救回來）`)) return;
+  pushUndo(`刪除 ${dn(c)}`);
   candidates = candidates.filter((x) => x.id !== editingId);
   save();
   modal.close();
   render();
-  toast(`已刪除 ${dn(c)}`);
+  toast(`已刪除 ${dn(c)}`, { undo: true });
 });
 
 // ---------- 看板互動：點擊、下拉選單、拖拉 ----------
 function setStage(id, stage) {
   const c = candidates.find((x) => x.id === id);
   if (!c || c.stage === stage) return;
+  pushUndo(`${dn(c)} ${c.stage} → ${stage}`);
   c.stage = stage;
   c.stageSince = nowIso();
   c.history.push({ stage, at: c.stageSince });
   if (stage !== '結案') c.result = '';
   save();
   render();
-  toast(`${dn(c)} → ${stage}`);
+  toast(`${dn(c)} → ${stage}`, { undo: true });
 }
 
 const board = $('#boardView');
 
 board.addEventListener('click', (e) => {
+  // 批次選取模式：點卡片＝勾選／取消，點「全選」＝整欄勾選
+  if (batchMode) {
+    const colAll = e.target.closest('.col-all');
+    if (colAll) {
+      const ids = filtered().filter((c) => c.stage === colAll.dataset.col).map((c) => c.id);
+      const allOn = ids.every((id) => selected.has(id));
+      ids.forEach((id) => (allOn ? selected.delete(id) : selected.add(id)));
+      return renderBoardBatch();
+    }
+    const pickCard = e.target.closest('.card');
+    if (pickCard && !e.target.closest('select')) {
+      const id = pickCard.dataset.id;
+      selected.has(id) ? selected.delete(id) : selected.add(id);
+      return renderBoardBatch();
+    }
+    return;
+  }
   const card = e.target.closest('.card');
   if (!card || e.target.closest('select')) return;
   const c = candidates.find((x) => x.id === card.dataset.id);
@@ -1574,6 +1806,78 @@ board.addEventListener('click', (e) => {
 board.addEventListener('change', (e) => {
   const sel = e.target.closest('[data-stage]');
   if (sel) setStage(sel.closest('.card').dataset.id, sel.value);
+});
+
+// ---------- 批次操作 ----------
+let batchMode = false;
+const selected = new Set();
+$('#batchStage').innerHTML = STAGES.filter((s) => s !== '結案').map((s) => `<option>${s}</option>`).join('');
+
+function renderBoardBatch() {
+  // 只留下畫面上還存在的人
+  [...selected].forEach((id) => { if (!candidates.some((c) => c.id === id)) selected.delete(id); });
+  renderBoard();
+  $('#batchCount').textContent = `已選 ${selected.size} 位`;
+  $('#batchActions').querySelectorAll('[data-batch="stage"], [data-batch="close"], [data-batch="excel"], [data-batch="delete"]')
+    .forEach((b) => { b.disabled = selected.size === 0; });
+}
+function setBatchMode(on) {
+  batchMode = on;
+  if (!on) selected.clear();
+  document.body.classList.toggle('batch-mode', on);
+  $('#batchActions').hidden = !on;
+  $('#batchToggle').textContent = on ? '✓ 批次選取中' : '☑ 批次選取';
+  $('#batchToggle').setAttribute('aria-pressed', on ? 'true' : 'false');
+  renderBoardBatch();
+}
+$('#batchToggle').addEventListener('click', () => {
+  if (view !== 'board') document.querySelector('.tab[data-view="board"]').click();
+  setBatchMode(!batchMode);
+  if (batchMode) toast('點卡片就能勾選；選好後在下方選擇要做的動作');
+});
+
+$('#batchActions').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-batch]')?.dataset.batch;
+  if (!act) return;
+  const picked = candidates.filter((c) => selected.has(c.id));
+  if (act === 'all') { filtered().forEach((c) => selected.add(c.id)); return renderBoardBatch(); }
+  if (act === 'none') { selected.clear(); return renderBoardBatch(); }
+  if (act === 'exit') return setBatchMode(false);
+  if (!picked.length) return toast('請先點選候選人');
+  const names = picked.length <= 3 ? picked.map(dn).join('、') : `${picked.length} 位候選人`;
+
+  if (act === 'stage' || act === 'close') {
+    const stage = act === 'stage' ? $('#batchStage').value : '結案';
+    const result = act === 'close' ? $('#batchResult').value : '';
+    if (act === 'close' && !confirm(`確定把 ${names} 結案為「${result}」嗎？`)) return;
+    pushUndo(act === 'close' ? `批次結案 ${picked.length} 位` : `批次移到${stage} ${picked.length} 位`);
+    const at = nowIso();
+    picked.forEach((c) => {
+      if (c.stage !== stage) { c.stage = stage; c.stageSince = at; c.history.push({ stage, at }); }
+      c.result = result;
+    });
+    save();
+    selected.clear();
+    render();
+    renderBoardBatch();
+    toast(act === 'close' ? `已將 ${names} 結案為「${result}」` : `已將 ${names} 移到「${stage}」`, { undo: true });
+  }
+  if (act === 'delete') {
+    if (!confirm(`確定要刪除 ${names} 嗎？（刪除後可以按「復原」救回來）`)) return;
+    pushUndo(`批次刪除 ${picked.length} 位`);
+    candidates = candidates.filter((c) => !selected.has(c.id));
+    save();
+    selected.clear();
+    render();
+    renderBoardBatch();
+    toast(`已刪除 ${names}`, { undo: true });
+  }
+  if (act === 'excel') {
+    withXlsx((X) => {
+      X.writeFile(buildWorkbook(X, candidatesToRows(picked)), `面試看板_選取${picked.length}位_${dateKey(new Date())}.xlsx`);
+      toast(`已匯出 ${picked.length} 位的 Excel`);
+    });
+  }
 });
 
 board.addEventListener('dragstart', (e) => {
@@ -1622,6 +1926,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     $('#calendarView').hidden = view !== 'calendar';
     $('#roomsView').hidden = view !== 'rooms';
     $('#analysisView').hidden = view !== 'analysis';
+    if (view !== 'board' && batchMode) setBatchMode(false);
     render();
   });
 });
@@ -1645,11 +1950,12 @@ function exportBackup() {
 }
 
 $('#resetBtn').addEventListener('click', () => {
-  if (candidates.length && !confirm(`還原示範資料會取代目前的 ${candidates.length} 筆資料，無法復原。\n建議先「匯出 Excel」備份。確定要還原嗎？`)) return;
+  if (candidates.length && !confirm(`還原示範資料會取代目前的 ${candidates.length} 筆資料。\n建議先「匯出 Excel」備份。確定要還原嗎？`)) return;
+  pushUndo('還原示範資料');
   candidates = sampleData();
   save();
   render();
-  toast('已還原示範資料');
+  toast('已還原示範資料', { undo: true });
 });
 
 // 提醒橫幅上的按鈕
@@ -1664,10 +1970,11 @@ $('#banners').addEventListener('click', (e) => {
   if (action === 'purge') {
     const old = candidates.filter((c) => c.stage === '結案' && daysSince(c.stageSince) >= RETENTION_DAYS);
     if (!confirm(`確定要永久刪除這 ${old.length} 位已結案候選人的資料嗎？\n${old.map(dn).join('、')}`)) return;
+    pushUndo(`刪除 ${old.length} 筆過期資料`);
     candidates = candidates.filter((c) => !old.includes(c));
     save();
     render();
-    toast(`已刪除 ${old.length} 筆過期資料`);
+    toast(`已刪除 ${old.length} 筆過期資料`, { undo: true });
   }
 });
 
@@ -1677,10 +1984,11 @@ $('#clearAllBtn').addEventListener('click', () => {
   const answer = prompt(`這會永久刪除全部 ${candidates.length} 位候選人的資料，無法復原。\n建議先「匯出 Excel」備份。\n\n確定要刪除，請輸入「刪除」兩個字：`);
   if (answer === null) return;
   if (answer.trim() !== '刪除') return toast('輸入不正確，已取消');
+  pushUndo('清除所有資料');
   candidates = [];
   save();
   render();
-  toast('已清除所有資料');
+  toast('已清除所有資料（關閉網頁前還可以按「復原」）', { undo: true });
 });
 
 // ---------- Excel 匯入／匯出 ----------
@@ -1714,6 +2022,7 @@ const XL_COLS = [
   ['email', 'Email', 24], ['phone', '電話', 14], ['stage', '目前階段', 9], ['result', '結案結果', 10],
   ['round', '面試輪次', 9], ['at', '面試時間', 17], ['duration', '時長（分鐘）', 11],
   ['interviewer', '面試官', 10], ['location', '地點／方式', 14], ['ivRating', '這輪評分', 8],
+  ...SCORE_ITEMS.map(([k, label]) => [`sc_${k}`, label, 8]),
   ['feedback', '這輪評語', 24], ['rating', '綜合評分', 8], ['next', '下一步', 18], ['notes', '備註', 24]
 ];
 // 讀取時也接受常見的其他寫法
@@ -1732,6 +2041,7 @@ const XL_ALIASES = {
   interviewer: ['面試官'],
   location: ['地點方式', '地點', '面試地點', '方式'],
   ivRating: ['這輪評分', '面試評分'],
+  ...Object.fromEntries(SCORE_ITEMS.map(([k, label]) => [`sc_${k}`, [label]])),
   feedback: ['這輪評語', '面試評語', '評語'],
   rating: ['綜合評分', '評分'],
   next: ['下一步'],
@@ -1765,7 +2075,8 @@ function candidatesToRows(list) {
     const ivs = [...c.interviews].sort((a, b) => (a.at || '9').localeCompare(b.at || '9'));
     if (!ivs.length) rows.push(base);
     ivs.forEach((iv) => rows.push({ ...base, round: iv.round, at: xlTime(iv.at), duration: iv.duration,
-      interviewer: iv.interviewer, location: iv.location, ivRating: iv.rating || '', feedback: iv.feedback }));
+      interviewer: iv.interviewer, location: iv.location, ivRating: iv.rating || '', feedback: iv.feedback,
+      ...Object.fromEntries(SCORE_ITEMS.map(([k]) => [`sc_${k}`, iv.scores?.[k] || ''])) }));
   }
   return rows;
 }
@@ -1785,6 +2096,7 @@ function buildWorkbook(X, rows) {
     ['面試時間', '例：2026/10/09 14:00（只填日期會預設上午 10:00）'],
     ['時長（分鐘）', '空白＝60'],
     ['這輪評分、綜合評分', '1～5 的數字，空白＝尚未評分'],
+    ['專業能力～學習動機', '這輪的 5 個評分細項，1～5 的數字，可以空白'],
     ['多輪面試', '同一位候選人有多輪面試時，複製一列，姓名與職缺相同、填不同的面試輪次即可'],
     ['個資提醒', '此檔案含候選人個資，請妥善保存，不要上傳到公開網站']
   ]);
@@ -1874,7 +2186,8 @@ function rowsToCandidates(X, aoa) {
         round: ROUND_TYPES.includes(round) ? round : round ? '其他' : (['一面', '二面', '三面'][g.interviews.length] || '其他'),
         at: at || '', duration: parseInt(get('duration'), 10) || 60,
         interviewer: txt('interviewer') || g.manager, location: txt('location'),
-        rating: parseInt(get('ivRating'), 10) || 0, feedback: txt('feedback')
+        rating: parseInt(get('ivRating'), 10) || 0, feedback: txt('feedback'),
+        scores: Object.fromEntries(SCORE_ITEMS.map(([k]) => [k, parseInt(get(`sc_${k}`), 10) || 0]).filter(([, v]) => v))
       });
     }
   });
@@ -1963,18 +2276,145 @@ $('#importForm').addEventListener('submit', (e) => {
   const f = $('#importForm').elements;
   let incoming = pendingImport.list;
   if (f.mode.value === 'replace') {
-    if (candidates.length && !confirm(`這會刪除目前的 ${candidates.length} 位候選人，改成 Excel 裡的 ${incoming.length} 位，無法復原。\n建議先「匯出 Excel」備份。確定嗎？`)) return;
+    if (candidates.length && !confirm(`這會刪除目前的 ${candidates.length} 位候選人，改成 Excel 裡的 ${incoming.length} 位。\n建議先「匯出 Excel」備份。確定嗎？`)) return;
+    pushUndo('從 Excel 匯入（取代）');
     candidates = incoming;
   } else {
     if (f.skipDup.checked) incoming = incoming.filter((c) => !isExisting(c));
+    pushUndo(`從 Excel 匯入 ${incoming.length} 位`);
     candidates = candidates.concat(incoming);
   }
   save();
   pendingImport = null;
   importDialog.close();
   render();
-  toast(`已從 Excel 匯入 ${incoming.length} 位候選人`);
+  toast(`已從 Excel 匯入 ${incoming.length} 位候選人`, { undo: true });
 });
+
+// ---------- 招募週報 ----------
+let reportWeek = 0;          // 0＝本週、-1＝上週
+let reportData = null;       // 給「匯出 Excel」用
+const reportDialog = $('#reportDialog');
+
+function weekRange(offset) {
+  const s = new Date(); s.setHours(0, 0, 0, 0);
+  s.setDate(s.getDate() - ((s.getDay() + 6) % 7) + offset * 7);   // 週一
+  return { start: s.getTime(), end: s.getTime() + 7 * DAY };
+}
+const fmtDay = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}（${'日一二三四五六'[d.getDay()]}）`; };
+
+function buildReport() {
+  // 範圍：上方的部門／職缺／面試主管篩選（不含搜尋文字）
+  const dept = $('#deptFilter').value, pos = $('#positionFilter').value, mgr = $('#managerFilter').value;
+  const list = candidates.filter((c) => (!dept || (c.department || '未分類') === dept) && (!pos || c.position === pos) && (!mgr || c.manager === mgr));
+  const scope = [dept || '全部部門', pos || '全部職缺', mgr ? `面試主管 ${mgr}` : ''].filter(Boolean).join('・');
+  const { start, end } = weekRange(reportWeek);
+  const next = weekRange(reportWeek + 1);
+  const inWeek = (t, r = { start, end }) => { const x = new Date(t).getTime(); return x >= r.start && x < r.end; };
+  const now = Date.now();
+
+  const allIv = list.flatMap((c) => c.interviews.filter((iv) => iv.at).map((iv) => ({ c, iv })));
+  const doneIv = allIv.filter(({ iv }) => inWeek(iv.at) && ivEnd(iv) <= now).sort((a, b) => byTime(a.iv, b.iv));
+  const pendingIv = allIv.filter(({ iv }) => inWeek(iv.at) && ivEnd(iv) > now).sort((a, b) => byTime(a.iv, b.iv));
+  const nextIv = allIv.filter(({ iv }) => inWeek(iv.at, next)).sort((a, b) => byTime(a.iv, b.iv));
+  const moves = list.flatMap((c) => c.history.map((h, i) => ({ c, h, prev: c.history[i - 1] })))
+    .filter(({ h, prev }) => prev && inWeek(h.at)).sort((a, b) => new Date(a.h.at) - new Date(b.h.at));
+  const newApps = list.filter((c) => inWeek(c.createdAt));
+  const closedThisWeek = moves.filter(({ h }) => h.stage === '結案');
+  const hired = closedThisWeek.filter(({ c }) => c.result === '錄取');
+  const lost = closedThisWeek.filter(({ c }) => c.result && c.result !== '錄取');
+  const active = list.filter((c) => c.stage !== '結案');
+  const stuck = active.filter(isStuck).sort((a, b) => daysSince(b.stageSince) - daysSince(a.stageSince));
+  const offers = active.filter((c) => c.stage === 'Offer');
+  const depts = [...new Set(list.map((c) => c.department || '未分類'))].map((d) => {
+    const ds = list.filter((c) => (c.department || '未分類') === d);
+    return [d, ds.filter((c) => c.stage !== '結案').length, newApps.filter((c) => ds.includes(c)).length,
+      doneIv.filter(({ c }) => ds.includes(c)).length, hired.filter(({ c }) => ds.includes(c)).length];
+  }).sort((a, b) => b[1] - a[1]);
+
+  const ivRow = ({ c, iv }, withScore) => [fmtDay(iv.at) + ' ' + iv.at.slice(11), dn(c), c.position, iv.round, iv.interviewer || '—',
+    withScore ? (iv.rating ? `${iv.rating}/5` : '未評分') : (iv.location || '—'), withScore ? (iv.feedback || '') : ''];
+
+  const W = reportWeek === 0 ? '本週' : '上週';     // 報告的那一週
+  const NW = reportWeek === 0 ? '下週' : '本週';    // 報告的下一週
+  reportData = {
+    W, NW,
+    file: `招募週報_${dateKey(new Date(start))}_${dateKey(new Date(end - DAY))}.xlsx`,
+    title: `招募週報 ${fmtDay(start)}～${fmtDay(end - DAY)}`,
+    summary: [
+      [`${W}新增投遞`, newApps.length], [`${W}完成面試`, doneIv.length], [`${W}尚待進行的面試`, pendingIv.length],
+      [`${W}階段異動`, moves.length], [`${W}錄取`, hired.length], [`${W}未錄取／婉拒`, lost.length],
+      ['目前進行中', active.length], [`卡關 ${STUCK_DAYS} 天以上`, stuck.length], ['Offer 待回覆', offers.length], [`${NW}排定面試`, nextIv.length]
+    ],
+    done: doneIv.map((x) => ivRow(x, true)),
+    pending: pendingIv.map((x) => ivRow(x, false).slice(0, 6)),
+    next: nextIv.map((x) => ivRow(x, false).slice(0, 6)),
+    moves: moves.map(({ c, h, prev }) => [fmtDay(h.at), dn(c), c.position, `${prev.stage} → ${h.stage}${h.stage === '結案' && c.result ? `（${c.result}）` : ''}`]),
+    attention: [
+      ...stuck.map((c) => ['卡關', dn(c), c.position, `${c.stage} 已 ${daysSince(c.stageSince)} 天`, c.next || '']),
+      ...offers.map((c) => ['Offer 待回覆', dn(c), c.position, `發出 ${daysSince(c.stageSince)} 天`, c.next || ''])
+    ],
+    depts
+  };
+
+  const table = (head, rows, empty) => rows.length
+    ? `<table class="data-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
+       <tbody>${rows.map((r) => `<tr>${r.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : `<p class="report-empty">${empty}</p>`;
+  const R = reportData;
+  $('#reportBody').innerHTML = `
+    <header class="report-head">
+      <img src="images/dawning-logo.webp" alt="敦新科技" class="report-logo">
+      <div>
+        <p class="eyebrow">WEEKLY RECRUITING REPORT</p>
+        <h2>${R.title}</h2>
+        <p class="report-meta">範圍：${esc(scope)}｜產生時間：${formatDate(nowIso())} ${toLocalInput(new Date()).slice(11)}｜Dawning Technology Inc. / HR Operations Dept.</p>
+      </div>
+    </header>
+    <div class="report-kpis">${R.summary.map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('')}</div>
+    <h3>${R.W}完成的面試（${R.done.length}）</h3>
+    ${table(['時間', '候選人', '職缺', '輪次', '面試官', '評分', '評語'], R.done, `${R.W}沒有已完成的面試。`)}
+    ${R.pending.length ? `<h3>${R.W}尚待進行（${R.pending.length}）</h3>${table(['時間', '候選人', '職缺', '輪次', '面試官', '地點'], R.pending, '')}` : ''}
+    <h3>${R.NW}排定的面試（${R.next.length}）</h3>
+    ${table(['時間', '候選人', '職缺', '輪次', '面試官', '地點'], R.next, `${R.NW}目前沒有排定的面試。`)}
+    <h3>${R.W}階段異動（${R.moves.length}）</h3>
+    ${table(['日期', '候選人', '職缺', '異動'], R.moves, `${R.W}沒有階段異動。`)}
+    <h3>需要關注（${R.attention.length}）</h3>
+    ${table(['類型', '候選人', '職缺', '狀況', '下一步'], R.attention, '目前沒有卡關或待回覆的 Offer 👍')}
+    <h3>各部門摘要</h3>
+    ${table(['部門', '進行中', `${R.W}新增投遞`, `${R.W}完成面試`, `${R.W}錄取`], R.depts.map((r) => r.map(String)), '沒有資料')}
+    <p class="report-foot">本報告含候選人個資，僅供內部使用，請勿外流。</p>`;
+  reportDialog.querySelectorAll('[data-week]').forEach((b) => b.classList.toggle('on', Number(b.dataset.week) === reportWeek));
+}
+
+$('#reportBtn').addEventListener('click', () => { reportWeek = 0; buildReport(); reportDialog.showModal(); });
+reportDialog.querySelector('.report-toolbar').addEventListener('click', (e) => {
+  const w = e.target.closest('[data-week]');
+  if (w) { reportWeek = Number(w.dataset.week); buildReport(); }
+});
+$('#reportClose').addEventListener('click', () => reportDialog.close());
+$('#reportPrint').addEventListener('click', () => {
+  document.body.classList.add('print-report');
+  window.print();
+  setTimeout(() => document.body.classList.remove('print-report'), 500);
+});
+$('#reportExcel').addEventListener('click', () => withXlsx((X) => {
+  const R = reportData;
+  const wb = X.utils.book_new();
+  const add = (name, head, rows, widths) => {
+    const ws = X.utils.aoa_to_sheet([head, ...rows]);
+    ws['!cols'] = widths.map((w) => ({ wch: w }));
+    X.utils.book_append_sheet(wb, ws, name);
+  };
+  add('摘要', ['項目', '數量'], [[R.title, ''], ...R.summary], [24, 10]);
+  add(`${R.W}面試`, ['時間', '候選人', '職缺', '輪次', '面試官', '評分', '評語'], R.done, [16, 10, 12, 8, 10, 8, 30]);
+  add('待進行與下週排程', ['時間', '候選人', '職缺', '輪次', '面試官', '地點'], [...R.pending, ...R.next], [16, 10, 12, 8, 10, 18]);
+  add('階段異動', ['日期', '候選人', '職缺', '異動'], R.moves, [12, 10, 12, 24]);
+  add('需要關注', ['類型', '候選人', '職缺', '狀況', '下一步'], R.attention, [12, 10, 12, 16, 24]);
+  add('部門摘要', ['部門', '進行中', `${R.W}新增投遞`, `${R.W}完成面試`, `${R.W}錄取`], R.depts, [12, 8, 12, 12, 10]);
+  X.writeFile(wb, R.file);
+  toast('已匯出週報 Excel');
+}));
 
 // ---------- 啟動 ----------
 save();
