@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <style>
+    .ink { fill: #151413; } .line { stroke: #151413; } .wine { fill: #7a1417; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #f1eee8; } .line { stroke: #f1eee8; } .wine { fill: #e58a8d; }
+    }
+  </style>
+  <rect class="line" x="1.5" y="1.5" width="45" height="45" fill="none" stroke-width="2"/>
+  <rect class="wine" x="10" y="11" width="6" height="26"/>
+  <rect class="ink" x="21" y="11" width="6" height="18"/>
+  <rect class="ink" x="32" y="11" width="6" height="11"/>
+</svg>
